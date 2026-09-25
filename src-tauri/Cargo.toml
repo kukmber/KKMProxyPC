@@ -1,0 +1,56 @@
+[package]
+name = "kkmproxypc"
+version = "0.1.0"
+description = "KKMProxy для Windows: VPN на mihomo, прокси для Telegram, обход DPI"
+authors = ["kukmber"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "kkmproxypc_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["process", "io-util", "time", "sync", "macros", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "socks", "json", "charset", "http2"] }
+futures = "0.3"
+anyhow = "1"
+base64 = "0.22"
+url = "2"
+percent-encoding = "2"
+rand = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sysproxy = "0.3"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_JobObjects",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_SystemInformation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Wdk_System_SystemServices",
+] }
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
