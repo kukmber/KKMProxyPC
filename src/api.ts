@@ -173,6 +173,11 @@ export const api = {
   zapretAutotune: (domains: string[]) => invoke<ProbeResult[]>("zapret_autotune", { domains }),
   restartAll: () => invoke<string[]>("restart_all"),
   dpiConflict: () => invoke<DpiConflict | null>("dpi_conflict"),
+  appRules: () => invoke<AppRule[]>("app_rules"),
+  setAppRules: (rules: AppRule[]) => invoke<void>("set_app_rules", { rules }),
+  runningProcesses: () => invoke<string[]>("running_processes"),
+  hotkeys: () => invoke<HotkeyInfo[]>("hotkeys"),
+  setHotkey: (action: string, accelerator: string) => invoke<void>("set_hotkey", { action, accelerator }),
   openExternal: (url: string) => openUrl(url),
   coreInfo: () => invoke<CoreInfo[]>("core_info"),
   checkCoreUpdates: () => invoke<CoreInfo[]>("check_core_updates"),
@@ -180,6 +185,34 @@ export const api = {
 };
 
 // ---------- контроллер mihomo ----------
+
+export interface HotkeyInfo {
+  action: string;
+  about: string;
+  accelerator: string;
+}
+
+export interface AppRule {
+  process: string;
+  /** vpn | direct | block */
+  action: string;
+}
+
+export interface ConnectionInfo {
+  id: string;
+  upload: number;
+  download: number;
+  start: string;
+  chains: string[];
+  rule: string;
+  metadata: {
+    network?: string;
+    host?: string;
+    destinationIP?: string;
+    process?: string;
+    processPath?: string;
+  };
+}
 
 export interface RuleInfo {
   type: string;
@@ -228,6 +261,10 @@ export class Mihomo {
 
   rules() {
     return this.req<{ rules: RuleInfo[] }>("GET", "/rules");
+  }
+
+  closeConnection(id: string) {
+    return this.req<void>("DELETE", `/connections/${encodeURIComponent(id)}`);
   }
 
   select(group: string, name: string) {

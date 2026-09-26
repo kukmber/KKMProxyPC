@@ -29,6 +29,10 @@ pub struct Settings {
     /// Отмеченные готовые наборы доменов и свои адреса.
     pub zapret_sets: Vec<String>,
     pub zapret_custom_hosts: String,
+    /// Горячие клавиши: действие — сочетание.
+    pub hotkeys: HashMap<String, String>,
+    /// Правила «эта программа — так»: применяются перед правилами подписки.
+    pub app_rules: Vec<crate::config::AppRule>,
     /// Что включать сразу после запуска программы.
     pub autostart_vpn: bool,
     pub autostart_tg: bool,
@@ -57,6 +61,8 @@ impl Default for Settings {
             zapret_hostlist_on: false,
             zapret_sets: Vec::new(),
             zapret_custom_hosts: String::new(),
+            hotkeys: HashMap::new(),
+            app_rules: Vec::new(),
             autostart_vpn: false,
             autostart_tg: false,
             autostart_zapret: false,

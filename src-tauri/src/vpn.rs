@@ -167,7 +167,14 @@ async fn start_inner(app: &AppHandle) -> Result<()> {
     let secret = util::random_hex(16);
     config::apply_overrides(
         &mut cfg,
-        &RuntimeOpts { mixed_port, controller_port, secret: &secret, mode: &settings.mode, tun },
+        &RuntimeOpts {
+            mixed_port,
+            controller_port,
+            secret: &secret,
+            mode: &settings.mode,
+            tun,
+            app_rules: &settings.app_rules,
+        },
     );
 
     // Пока ядро само грузит rule-provider'ы, оно не пропускает трафик. Поэтому

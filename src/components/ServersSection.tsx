@@ -5,6 +5,8 @@ import { Mihomo, RuleInfo } from "../api";
 import { cleanName, Flag } from "../flags";
 import { useNotify } from "../toast";
 import { Delay, NOT_TESTABLE, Servers } from "./useServers";
+import { ConnectionsList } from "./ConnectionsList";
+import { AppRules } from "./AppRules";
 
 export const TYPE_LABEL: Record<string, string> = {
   Vless: "VLESS",
@@ -38,30 +40,41 @@ export function ServersSection({
   connected: boolean;
   mihomo: Mihomo | null;
 }) {
-  const [view, setView] = useState<"servers" | "rules">("servers");
-
-  if (!connected) {
-    return (
-      <section className="pane pane-list">
-        <div className="empty">
-          <span className="empty-title">Серверы и правила</span>
-          <span className="hint">Появятся после подключения</span>
-        </div>
-      </section>
-    );
-  }
+  // «Программы» доступны и без подключения: правила — это настройка,
+  // их удобно задать заранее.
+  const [view, setView] = useState<"servers" | "conn" | "apps" | "rules">("servers");
+  const tabs: { id: typeof view; label: string; needsConnection: boolean }[] = [
+    { id: "servers", label: "Серверы", needsConnection: true },
+    { id: "conn", label: "Соединения", needsConnection: true },
+    { id: "apps", label: "Программы", needsConnection: false },
+    { id: "rules", label: "Правила подписки", needsConnection: true },
+  ];
+  const active = tabs.find((t) => t.id === view)!;
 
   return (
     <section className="pane pane-list">
       <div className="chips" style={{ padding: "12px 12px 6px" }}>
-        <button className={`chip${view === "servers" ? " on" : ""}`} onClick={() => setView("servers")}>
-          Серверы
-        </button>
-        <button className={`chip${view === "rules" ? " on" : ""}`} onClick={() => setView("rules")}>
-          Правила
-        </button>
+        {tabs.map((t) => (
+          <button key={t.id} className={`chip${view === t.id ? " on" : ""}`} onClick={() => setView(t.id)}>
+            {t.label}
+          </button>
+        ))}
       </div>
-      {view === "servers" ? <ServerList servers={servers} /> : <RuleList mihomo={mihomo} />}
+
+      {active.needsConnection && !connected ? (
+        <div className="empty">
+          <span className="empty-title">{active.label}</span>
+          <span className="hint">Появятся после подключения</span>
+        </div>
+      ) : view === "servers" ? (
+        <ServerList servers={servers} />
+      ) : view === "conn" ? (
+        <ConnectionsList mihomo={mihomo} />
+      ) : view === "apps" ? (
+        <AppRules connected={connected} />
+      ) : (
+        <RuleList mihomo={mihomo} />
+      )}
     </section>
   );
 }

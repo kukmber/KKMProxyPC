@@ -1047,3 +1047,63 @@ textarea,
   text-align: right;
   color: var(--colorBrandForeground1);
 }
+
+/* Строка активного соединения. */
+.conn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px 7px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.conn:nth-child(odd) {
+  background: var(--subtle-fill);
+}
+
+.conn-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.conn-bytes {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: right;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.conn-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Правило для программы. */
+.apprule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.apprule:nth-child(even) {
+  background: var(--subtle-fill);
+}
+
+.apprule > .ellipsis {
+  flex: 1;
+  min-width: 0;
+}
+
+.apprule .segmented button {
+  font-size: 12px;
+  padding: 4px 10px;
+}

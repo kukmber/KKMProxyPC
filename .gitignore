@@ -23,6 +23,7 @@ src-tauri/cores
 *.pfx
 *.p12
 tauri-private.key*
+updater.key*
 .env
 .env.local
 

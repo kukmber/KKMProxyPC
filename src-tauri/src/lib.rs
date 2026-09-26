@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod cores;
 mod hostsets;
+mod hotkeys;
 mod logs;
 mod paths;
 mod profiles;
@@ -41,6 +42,9 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--autostart"]),
         ))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
@@ -50,6 +54,9 @@ pub fn run() {
             vpn::restore_sysproxy(app.handle());
             tray::build(app.handle())?;
             cores::schedule_checks(app.handle());
+            if let Err(e) = hotkeys::apply(app.handle()) {
+                eprintln!("горячие клавиши не применились: {e:#}");
+            }
 
             if let Some(w) = app.get_webview_window("main") {
                 if winsys::windows_build() >= 22000 {
@@ -143,6 +150,11 @@ pub fn run() {
             commands::set_zapret_custom,
             commands::zapret_autotune,
             commands::dpi_conflict,
+            commands::app_rules,
+            commands::set_app_rules,
+            commands::running_processes,
+            commands::hotkeys,
+            commands::set_hotkey,
             commands::restart_all,
             commands::get_startup,
             commands::set_startup,

@@ -401,3 +401,44 @@ pub fn dpi_conflict(st: State<AppState>) -> Option<DpiConflict> {
     }
     winsys::find_process("winws.exe").map(|(pid, path)| DpiConflict { pid, path })
 }
+
+// ---------- правила по программам ----------
+
+#[tauri::command]
+pub fn app_rules(st: State<AppState>) -> Vec<crate::config::AppRule> {
+    st.settings.lock().unwrap().app_rules.clone()
+}
+
+/// Сохраняет правила. Ядро перечитывает их только при перезапуске, поэтому
+/// работающий VPN поднимаем заново.
+#[tauri::command]
+pub async fn set_app_rules(
+    app: AppHandle,
+    st: State<'_, AppState>,
+    rules: Vec<crate::config::AppRule>,
+) -> R<()> {
+    st.update_settings(|s| s.app_rules = rules).map_err(err_str)?;
+    if st.vpn.status().state == "running" {
+        vpn::restart(&app).await.map_err(err_str)?;
+    }
+    Ok(())
+}
+
+/// Запущенные программы — список для выбора при добавлении правила.
+#[tauri::command]
+pub fn running_processes() -> Vec<String> {
+    winsys::running_processes()
+}
+
+// ---------- горячие клавиши ----------
+
+#[tauri::command]
+pub fn hotkeys(app: AppHandle) -> Vec<crate::hotkeys::HotkeyInfo> {
+    crate::hotkeys::list(&app)
+}
+
+/// Пустое сочетание убирает горячую клавишу.
+#[tauri::command]
+pub fn set_hotkey(app: AppHandle, action: String, accelerator: String) -> R<()> {
+    crate::hotkeys::set(&app, &action, &accelerator).map_err(err_str)
+}

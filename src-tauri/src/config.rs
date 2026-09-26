@@ -10,6 +10,17 @@ pub struct RuntimeOpts<'a> {
     pub secret: &'a str,
     pub mode: &'a str,
     pub tun: bool,
+    /// Правила «эта программа — так»: имя exe и куда её отправлять.
+    pub app_rules: &'a [AppRule],
+}
+
+/// Правило для одной программы. `action` — `vpn`, `direct` или `block`;
+/// в конфиг попадает имя группы подписки либо встроенная цель ядра.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AppRule {
+    pub process: String,
+    pub action: String,
 }
 
 /// Правило, по которому проверяется готовность ядра: запрос к собственному
@@ -65,13 +76,54 @@ pub fn apply_overrides(cfg: &mut Mapping, o: &RuntimeOpts) {
     apply_dns(cfg, o.tun);
     apply_tun(cfg, o.tun);
 
+    // Правила пользователя идут перед правилами подписки, иначе её «MATCH»
+    // разберёт трафик раньше и до наших дело не дойдёт.
+    let group = first_group_name(cfg);
+    let mut ours: Vec<Value> = vec![k(LOOPBACK_RULE)];
+    for r in o.app_rules {
+        let name = r.process.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let target = match r.action.as_str() {
+            "direct" => "DIRECT".to_string(),
+            "block" => "REJECT".to_string(),
+            _ => group.clone(),
+        };
+        ours.push(k(&format!("PROCESS-NAME,{name},{target}")));
+    }
+    let existing: Vec<String> = ours.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
     let rules = cfg
         .entry(k("rules"))
         .or_insert_with(|| Value::Sequence(vec![]));
     if let Value::Sequence(seq) = rules {
-        seq.retain(|r| r.as_str() != Some(LOOPBACK_RULE));
-        seq.insert(0, k(LOOPBACK_RULE));
+        seq.retain(|r| !r.as_str().is_some_and(|s| existing.iter().any(|e| e == s)));
+        for (i, r) in ours.into_iter().enumerate() {
+            seq.insert(i, r);
+        }
     }
+}
+
+/// Куда отправлять трафик, когда правило говорит «через VPN». Берём первую
+/// группу выбора из подписки: её имя у каждой своё, а GLOBAL есть всегда.
+fn first_group_name(cfg: &Mapping) -> String {
+    cfg.get("proxy-groups")
+        .and_then(Value::as_sequence)
+        .and_then(|groups| {
+            groups
+                .iter()
+                .find_map(|g| {
+                    let m = g.as_mapping()?;
+                    let name = m.get("name")?.as_str()?;
+                    (m.get("type")?.as_str()? == "select").then(|| name.to_string())
+                })
+                .or_else(|| {
+                    groups
+                        .first()
+                        .and_then(|g| g.as_mapping()?.get("name")?.as_str().map(str::to_string))
+                })
+        })
+        .unwrap_or_else(|| "GLOBAL".to_string())
 }
 
 fn apply_dns(cfg: &mut Mapping, tun: bool) {
@@ -264,14 +316,44 @@ mod tests {
         )
         .unwrap();
         let mut cfg: Mapping = serde_yaml::from_str(&parsed.yaml).unwrap();
-        apply_overrides(&mut cfg, &RuntimeOpts { mixed_port: 17890, controller_port: 19090, secret: "test", mode: "rule", tun: false });
+        apply_overrides(&mut cfg, &RuntimeOpts { mixed_port: 17890, controller_port: 19090, secret: "test", mode: "rule", tun: false, app_rules: &[] });
         std::fs::write(out, serde_yaml::to_string(&cfg).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn app_rules_go_before_subscription_rules() {
+        let mut cfg: Mapping = serde_yaml::from_str(
+            "proxy-groups:\n  - {name: Авто, type: url-test}\n  - {name: Выбор, type: select}\nrules:\n  - MATCH,Выбор\n",
+        )
+        .unwrap();
+        let rules = vec![
+            AppRule { process: "Discord.exe".into(), action: "vpn".into() },
+            AppRule { process: "steam.exe".into(), action: "direct".into() },
+            AppRule { process: "bad.exe".into(), action: "block".into() },
+            AppRule { process: "  ".into(), action: "vpn".into() },
+        ];
+        apply_overrides(
+            &mut cfg,
+            &RuntimeOpts { mixed_port: 1, controller_port: 2, secret: "s", mode: "rule", tun: false, app_rules: &rules },
+        );
+        let got: Vec<&str> = cfg["rules"].as_sequence().unwrap().iter().filter_map(Value::as_str).collect();
+        assert_eq!(
+            got,
+            vec![
+                LOOPBACK_RULE,
+                // «через VPN» подставляет группу выбора из подписки, а не GLOBAL
+                "PROCESS-NAME,Discord.exe,Выбор",
+                "PROCESS-NAME,steam.exe,DIRECT",
+                "PROCESS-NAME,bad.exe,REJECT",
+                "MATCH,Выбор",
+            ]
+        );
     }
 
     #[test]
     fn overrides_put_loopback_first() {
         let mut cfg: Mapping = serde_yaml::from_str("port: 1\nrules:\n  - MATCH,PROXY\n").unwrap();
-        apply_overrides(&mut cfg, &RuntimeOpts { mixed_port: 7890, controller_port: 9, secret: "s", mode: "rule", tun: false });
+        apply_overrides(&mut cfg, &RuntimeOpts { mixed_port: 7890, controller_port: 9, secret: "s", mode: "rule", tun: false, app_rules: &[] });
         assert!(cfg.get("port").is_none());
         assert_eq!(cfg["rules"][0].as_str(), Some(LOOPBACK_RULE));
         assert_eq!(cfg["dns"]["respect-rules"], Value::Bool(true));

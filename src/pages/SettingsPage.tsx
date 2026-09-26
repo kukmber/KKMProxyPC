@@ -4,6 +4,8 @@ import { ArrowSyncRegular, ArrowDownloadRegular, CheckmarkCircleRegular } from "
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, CoreInfo, PlatformInfo, Startup } from "../api";
 import { useCores } from "../hooks";
+import { AppUpdateBanner, useAppUpdate } from "../components/AppUpdate";
+import { Hotkeys } from "../components/Hotkeys";
 import { useNotify } from "../toast";
 
 const ROLE: Record<string, string> = {
@@ -18,6 +20,7 @@ export function SettingsPage() {
   const [platform, setPlatform] = useState<PlatformInfo | null>(null);
   const [startup, setStartup] = useState<Startup | null>(null);
   const [checking, setChecking] = useState(false);
+  const appUpdate = useAppUpdate();
   const [busy, setBusy] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -87,6 +90,8 @@ export function SettingsPage() {
     <div className="page">
       <h1 className="page-title">Настройки</h1>
 
+      <AppUpdateBanner update={appUpdate.update} />
+
       <div className="section-title">Запуск</div>
       <div className="card">
         {row(
@@ -115,6 +120,13 @@ export function SettingsPage() {
           (v) => change({ zapret: v }),
         )}
       </div>
+
+      <div className="section-title">Горячие клавиши</div>
+      <Hotkeys />
+      <p className="hint" style={{ margin: "2px 4px" }}>
+        Работают поверх любой программы — окно открывать не нужно. Нажмите кнопку и введите сочетание;
+        нужен хотя бы один модификатор (Ctrl, Alt, Shift или Win) либо клавиша F1–F12. Esc — отмена.
+      </p>
 
       <div className="section-title">Окно</div>
       <div className="card">
@@ -201,8 +213,21 @@ export function SettingsPage() {
         <div className="row">
           <div className="text">
             <span className="title">KKMProxy для Windows</span>
-            <span className="desc">Версия {platform?.version}</span>
+            <span className="desc">
+              Версия {platform?.version}
+              {appUpdate.update ? ` · доступна ${appUpdate.update.version}` : appUpdate.error ? ` · ${appUpdate.error}` : ""}
+            </span>
           </div>
+          <Button
+            icon={appUpdate.checking ? <Spinner size="tiny" /> : <ArrowSyncRegular />}
+            disabled={appUpdate.checking}
+            onClick={async () => {
+              const u = await appUpdate.check(false);
+              if (!u) notify.ok("У вас последняя версия");
+            }}
+          >
+            Проверить обновление
+          </Button>
         </div>
       </div>
     </div>
