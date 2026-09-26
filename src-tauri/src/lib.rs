@@ -142,6 +142,7 @@ pub fn run() {
             commands::set_zapret_hosts,
             commands::set_zapret_custom,
             commands::zapret_autotune,
+            commands::dpi_conflict,
             commands::restart_all,
             commands::get_startup,
             commands::set_startup,

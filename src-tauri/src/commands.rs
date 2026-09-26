@@ -382,3 +382,22 @@ pub fn set_startup(app: AppHandle, st: State<AppState>, value: Startup) -> R<()>
     })
     .map_err(err_str)
 }
+
+/// Чужая программа обхода DPI, если она сейчас работает. Два обхода
+/// одновременно перехватывают одни и те же пакеты и рвут сеть, поэтому
+/// о таком соседстве предупреждаем заранее, а не по факту поломки.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DpiConflict {
+    pub pid: u32,
+    pub path: String,
+}
+
+#[tauri::command]
+pub fn dpi_conflict(st: State<AppState>) -> Option<DpiConflict> {
+    // Свой запущенный обход конфликтом не считаем.
+    if st.zapret.status().state == "running" {
+        return None;
+    }
+    winsys::find_process("winws.exe").map(|(pid, path)| DpiConflict { pid, path })
+}

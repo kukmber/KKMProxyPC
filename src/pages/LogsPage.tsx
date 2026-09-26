@@ -7,7 +7,9 @@ import { api, LogLine } from "../api";
 import { useNotify } from "../toast";
 
 const SOURCES = [
-  { value: "vpn", label: "Ядро VPN" },
+  { value: "vpn", label: "VPN" },
+  { value: "tg", label: "Telegram" },
+  { value: "dpi", label: "Zapret" },
   { value: "app", label: "Приложение" },
 ];
 

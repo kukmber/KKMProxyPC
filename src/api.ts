@@ -172,6 +172,7 @@ export const api = {
   setZapretCustom: (args: string) => invoke<void>("set_zapret_custom", { args }),
   zapretAutotune: (domains: string[]) => invoke<ProbeResult[]>("zapret_autotune", { domains }),
   restartAll: () => invoke<string[]>("restart_all"),
+  dpiConflict: () => invoke<DpiConflict | null>("dpi_conflict"),
   openExternal: (url: string) => openUrl(url),
   coreInfo: () => invoke<CoreInfo[]>("core_info"),
   checkCoreUpdates: () => invoke<CoreInfo[]>("check_core_updates"),
@@ -179,6 +180,17 @@ export const api = {
 };
 
 // ---------- контроллер mihomo ----------
+
+export interface RuleInfo {
+  type: string;
+  payload: string;
+  proxy: string;
+}
+
+export interface DpiConflict {
+  pid: number;
+  path: string;
+}
 
 export interface ProxyInfo {
   name: string;
@@ -212,6 +224,10 @@ export class Mihomo {
 
   proxies() {
     return this.req<{ proxies: Record<string, ProxyInfo> }>("GET", "/proxies");
+  }
+
+  rules() {
+    return this.req<{ rules: RuleInfo[] }>("GET", "/rules");
   }
 
   select(group: string, name: string) {

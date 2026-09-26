@@ -9,6 +9,7 @@ import {
 import { api, formatDuration, VpnState } from "../api";
 import { useNow, useTgStatus, useVpnStatus, useZapretStatus } from "../hooks";
 import { useNotify } from "../toast";
+import { DpiWarning } from "../components/DpiWarning";
 
 interface Unit {
   key: string;
@@ -93,6 +94,8 @@ export function ControlPage() {
       <p className="hint" style={{ margin: "-4px 4px 12px" }}>
         Три способа обойти блокировки. Их можно включать по отдельности или вместе.
       </p>
+
+      <DpiWarning />
 
       <div className="units">
         {units.map((u) => (

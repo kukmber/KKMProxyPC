@@ -14,6 +14,7 @@ import { useCores, useZapretStatus } from "../hooks";
 import { useNotify } from "../toast";
 import { ServiceCard, UpdateBanner } from "../components/ServiceCard";
 import { AutotuneDialog } from "../components/AutotuneDialog";
+import { DpiWarning } from "../components/DpiWarning";
 
 const CUSTOM = "custom";
 
@@ -131,6 +132,8 @@ export function ZapretPage() {
   return (
     <div className="page">
       <h1 className="page-title">Zapret</h1>
+
+      <DpiWarning />
 
       <UpdateBanner core={core} />
 

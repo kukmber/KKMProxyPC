@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
-import { api, CoreInfo, Mihomo, TgStatus, VpnStatus, ZapretStatus } from "./api";
+import { api, CoreInfo, DpiConflict, Mihomo, TgStatus, VpnStatus, ZapretStatus } from "./api";
 
 export function useVpnStatus(): VpnStatus {
   const [status, setStatus] = useState<VpnStatus>({ state: "stopped" });
@@ -36,6 +36,19 @@ export function useZapretStatus(): ZapretStatus {
     };
   }, []);
   return status;
+}
+
+/** Чужая программа обхода DPI, если она сейчас работает. */
+export function useDpiConflict(): DpiConflict | null {
+  const [conflict, setConflict] = useState<DpiConflict | null>(null);
+  useEffect(() => {
+    const check = () => api.dpiConflict().then(setConflict).catch(() => {});
+    check();
+    // Такая программа может появиться в любой момент, поэтому поглядываем.
+    const id = setInterval(check, 5000);
+    return () => clearInterval(id);
+  }, []);
+  return conflict;
 }
 
 /** Сведения о ядрах; обновляются по событию после проверки или обновления. */

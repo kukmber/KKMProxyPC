@@ -173,7 +173,7 @@ export function VpnPage({ status }: { status: VpnStatus }) {
         </div>
       </section>
 
-      <ServersSection servers={servers} connected={running} />
+      <ServersSection servers={servers} connected={running} mihomo={mihomo} />
 
       <Drawer type="overlay" position="end" size="medium" open={drawer} onOpenChange={(_, d) => setDrawer(d.open)}>
         <DrawerHeader>

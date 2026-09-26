@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button, Input, Spinner, Tooltip } from "@fluentui/react-components";
 import { FlashRegular, SearchRegular, WarningRegular } from "@fluentui/react-icons";
+import { Mihomo, RuleInfo } from "../api";
 import { cleanName, Flag } from "../flags";
 import { useNotify } from "../toast";
 import { Delay, NOT_TESTABLE, Servers } from "./useServers";
@@ -28,7 +29,44 @@ export const TYPE_LABEL: Record<string, string> = {
   Pass: "пропуск",
 };
 
-export function ServersSection({ servers, connected }: { servers: Servers; connected: boolean }) {
+export function ServersSection({
+  servers,
+  connected,
+  mihomo,
+}: {
+  servers: Servers;
+  connected: boolean;
+  mihomo: Mihomo | null;
+}) {
+  const [view, setView] = useState<"servers" | "rules">("servers");
+
+  if (!connected) {
+    return (
+      <section className="pane pane-list">
+        <div className="empty">
+          <span className="empty-title">Серверы и правила</span>
+          <span className="hint">Появятся после подключения</span>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="pane pane-list">
+      <div className="chips" style={{ padding: "12px 12px 6px" }}>
+        <button className={`chip${view === "servers" ? " on" : ""}`} onClick={() => setView("servers")}>
+          Серверы
+        </button>
+        <button className={`chip${view === "rules" ? " on" : ""}`} onClick={() => setView("rules")}>
+          Правила
+        </button>
+      </div>
+      {view === "servers" ? <ServerList servers={servers} /> : <RuleList mihomo={mihomo} />}
+    </section>
+  );
+}
+
+function ServerList({ servers }: { servers: Servers }) {
   const notify = useNotify();
   const [query, setQuery] = useState("");
   const [proto, setProto] = useState("all");
@@ -40,17 +78,6 @@ export function ServersSection({ servers, connected }: { servers: Servers; conne
     (m) => (proto === "all" || m.type === proto) && (!query || m.name.toLowerCase().includes(query.toLowerCase())),
   );
 
-  if (!connected) {
-    return (
-      <section className="pane pane-list">
-        <div className="empty">
-          <span className="empty-title">Серверы</span>
-          <span className="hint">Список и задержка появятся после подключения</span>
-        </div>
-      </section>
-    );
-  }
-
   const testAll = async () => {
     setTesting(true);
     await servers.testMany(members.filter((m) => !NOT_TESTABLE.has(m.type)).map((m) => m.name));
@@ -58,7 +85,7 @@ export function ServersSection({ servers, connected }: { servers: Servers; conne
   };
 
   return (
-    <section className="pane pane-list">
+    <>
       <div className="list-head">
         <Input
           appearance="filled-lighter"
@@ -69,26 +96,44 @@ export function ServersSection({ servers, connected }: { servers: Servers; conne
           style={{ flex: 1, minWidth: 0 }}
         />
         <Tooltip content="Проверить задержку всех" relationship="label">
-          <Button appearance="subtle" icon={testing ? <Spinner size="tiny" /> : <FlashRegular />} onClick={testAll} disabled={testing} />
+          <Button
+            appearance="subtle"
+            icon={testing ? <Spinner size="tiny" /> : <FlashRegular />}
+            onClick={testAll}
+            disabled={testing}
+          />
         </Tooltip>
       </div>
 
-      {(groups.length > 1 || protocols.length > 1) && (
-        <div className="chips">
-          {groups.length > 1 &&
-            groups.map((g) => (
+      {/* Группы и протоколы показываем всегда: по ним сразу видно,
+          что вообще есть в подписке. */}
+      {groups.length > 0 && (
+        <>
+          <div className="caps" style={{ margin: "2px 12px 4px" }}>
+            Группы
+          </div>
+          <div className="chips">
+            {groups.map((g) => (
               <button key={g.name} className={`chip${g.name === group ? " on" : ""}`} onClick={() => setGroup(g.name)}>
                 {g.name === "GLOBAL" ? "Глобальный" : cleanName(g.name)}
               </button>
             ))}
-          {groups.length > 1 && protocols.length > 1 && <span className="chip-sep" />}
-          {protocols.length > 1 &&
-            ["all", ...protocols].map((p) => (
+          </div>
+        </>
+      )}
+      {protocols.length > 0 && (
+        <>
+          <div className="caps" style={{ margin: "6px 12px 4px" }}>
+            Протоколы
+          </div>
+          <div className="chips">
+            {["all", ...protocols].map((p) => (
               <button key={p} className={`chip ghost${p === proto ? " on" : ""}`} onClick={() => setProto(p)}>
-                {p === "all" ? "Все" : TYPE_LABEL[p] ?? p}
+                {p === "all" ? `Все (${members.length})` : `${TYPE_LABEL[p] ?? p} (${members.filter((m) => m.type === p).length})`}
               </button>
             ))}
-        </div>
+          </div>
+        </>
       )}
 
       <div className="list">
@@ -114,7 +159,63 @@ export function ServersSection({ servers, connected }: { servers: Servers; conne
         ))}
         {!visible.length && <div className="hint" style={{ padding: 16 }}>Ничего не найдено</div>}
       </div>
-    </section>
+    </>
+  );
+}
+
+/** Правила маршрутизации из подписки: по ним ядро решает, куда слать запрос. */
+function RuleList({ mihomo }: { mihomo: Mihomo | null }) {
+  const [rules, setRules] = useState<RuleInfo[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!mihomo) return;
+    mihomo
+      .rules()
+      .then((r) => setRules(r.rules))
+      .catch(() => setError("Не удалось получить правила от ядра"));
+  }, [mihomo]);
+
+  const q = query.toLowerCase();
+  const visible = (rules ?? []).filter(
+    (r) => !q || r.payload.toLowerCase().includes(q) || r.proxy.toLowerCase().includes(q) || r.type.toLowerCase().includes(q),
+  );
+  // Правил бывают тысячи — показываем первые, остальные ищутся поиском.
+  const shown = visible.slice(0, 400);
+
+  return (
+    <>
+      <div className="list-head">
+        <Input
+          appearance="filled-lighter"
+          contentBefore={<SearchRegular />}
+          placeholder="Поиск по домену, типу или группе"
+          value={query}
+          onChange={(_, d) => setQuery(d.value)}
+          style={{ flex: 1, minWidth: 0 }}
+        />
+      </div>
+      <div className="hint" style={{ padding: "0 14px 6px" }}>
+        {error
+          ? error
+          : rules === null
+            ? "Загрузка…"
+            : `Показано ${shown.length} из ${visible.length}${visible.length !== rules.length ? ` (всего ${rules.length})` : ""}`}
+      </div>
+      <div className="list">
+        {shown.map((r, i) => (
+          <div className="rule" key={`${r.type}-${r.payload}-${i}`}>
+            <span className="rule-type">{r.type}</span>
+            <span className="rule-payload ellipsis mono" title={r.payload}>
+              {r.payload || "—"}
+            </span>
+            <span className="rule-proxy ellipsis">{cleanName(r.proxy)}</span>
+          </div>
+        ))}
+        {rules !== null && !visible.length && <div className="hint" style={{ padding: 16 }}>Ничего не найдено</div>}
+      </div>
+    </>
   );
 }
 

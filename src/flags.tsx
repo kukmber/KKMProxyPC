@@ -1,4 +1,5 @@
 import * as Flags from "country-flag-icons/react/3x2";
+import { GlobeRegular } from "@fluentui/react-icons";
 import type { ComponentType, SVGProps } from "react";
 
 // В Windows эмодзи-флаги рисуются двумя буквами («DE»), поэтому страна
@@ -74,8 +75,23 @@ export function Flag({ name, size = 20 }: { name: string; size?: number }) {
   const code = countryOf(name);
   const F = code ? FLAG_SET[code] : undefined;
   const style = { width: size, height: (size * 2) / 3, borderRadius: 3, flexShrink: 0 };
+  // Страну удалось определить — рисуем флаг. Нет — значок глобуса:
+  // пустой прямоугольник выглядел бы как недогрузившаяся картинка.
   if (!F) {
-    return <span style={{ ...style, background: "var(--subtle-fill)", display: "inline-block" }} />;
+    return (
+      <span
+        title="Страна не определена по названию сервера"
+        style={{
+          ...style,
+          display: "grid",
+          placeItems: "center",
+          color: "var(--text-secondary)",
+          fontSize: size * 0.7,
+        }}
+      >
+        <GlobeRegular />
+      </span>
+    );
   }
   return <F style={{ ...style, boxShadow: "0 0 0 1px var(--card-border)" }} />;
 }

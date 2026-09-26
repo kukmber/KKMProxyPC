@@ -1021,3 +1021,29 @@ textarea,
   font-size: 13px;
   white-space: nowrap;
 }
+
+/* Строка правила маршрутизации: тип, что сравнивается, куда отправляется. */
+.rule {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 132px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.rule:nth-child(odd) {
+  background: var(--subtle-fill);
+}
+
+.rule-type {
+  color: var(--text-secondary);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.rule-proxy {
+  text-align: right;
+  color: var(--colorBrandForeground1);
+}
