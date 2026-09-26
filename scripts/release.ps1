@@ -58,7 +58,9 @@ if (-not $SkipBuild) {
   if ($LASTEXITCODE -ne 0) { throw "сборка не удалась" }
 }
 
-$setup = Get-ChildItem "$root\src-tauri\target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
+# Берём установщик именно той версии, что в конфиге: рядом лежат и прежние.
+$setup = Get-ChildItem "$root\src-tauri\target\release\bundle\nsis\*_${version}_*-setup.exe" | Select-Object -First 1
+if (-not $setup) { throw "Не найден установщик версии $version - соберите его" }
 $sig = "$($setup.FullName).sig"
 if (-not (Test-Path $sig)) { throw "Нет подписи $sig — собирайте с ключом обновлений" }
 "установщик: $($setup.Name), $([math]::Round($setup.Length/1MB,2)) МБ"
