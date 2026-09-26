@@ -204,6 +204,11 @@ async fn install(app: &AppHandle, s: &Spec) -> Result<String> {
     st.update_settings(|set| {
         set.core_latest.insert(s.id.into(), rel.tag_name.clone());
     })?;
+    // Набор zapret требует пользовательских списков — создаём их сразу,
+    // иначе первая же попытка запуска закончится ошибкой.
+    if s.id == "zapret" {
+        let _ = crate::zapret::ensure_lists(app);
+    }
     st.logs.push(app, "app", "info", format!("{} {} установлен", s.title, rel.tag_name));
     Ok(rel.tag_name)
 }

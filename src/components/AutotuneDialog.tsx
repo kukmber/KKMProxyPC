@@ -12,7 +12,7 @@ import {
   ProgressBar,
   Spinner,
 } from "@fluentui/react-components";
-import { CheckmarkCircleFilled, DismissCircleRegular } from "@fluentui/react-icons";
+import { CheckmarkCircleFilled } from "@fluentui/react-icons";
 import { listen } from "@tauri-apps/api/event";
 import { api, AutotuneProgress, errorText, ProbeResult } from "../api";
 
@@ -50,16 +50,18 @@ export function AutotuneDialog(props: {
   // «Без обхода» — точка отсчёта: если с ним столько же, обход не нужен.
   const baseline = results?.find((r) => r.id === "none");
   const best = results
-    ?.filter((r) => r.id !== "none")
+    ?.filter((r) => r.id !== "none" && !r.error)
     .reduce<ProbeResult | null>((a, b) => (!a || b.ok > a.ok ? b : a), null);
-  const worthIt = best && baseline && best.ok > baseline.ok;
+  const worthIt = !!best && !!baseline && best.ok > baseline.ok;
 
   return (
-    <Dialog open={props.open} onOpenChange={(_, d) => !d.open && !running && props.onClose()}>
+    <Dialog open={props.open} onOpenChange={(_, d) => !d.open && props.onClose()}>
       <DialogSurface style={{ maxWidth: 560 }}>
         <DialogBody>
           <DialogTitle>Автоподбор стратегии</DialogTitle>
-          <DialogContent style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Высоту задаём здесь: стратегий больше двух десятков, и без
+              прокрутки список уезжает за край окна вместе с кнопками. */}
+          <DialogContent style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 120 }}>
             <span className="hint">
               Проверяю по очереди каждую стратегию{" "}
               {props.domains.length
@@ -85,54 +87,58 @@ export function AutotuneDialog(props: {
             )}
 
             {results && (
-              <div className="card" style={{ overflow: "hidden" }}>
-                {results.map((r) => (
-                  <div className="row" key={r.id} style={{ minHeight: 52, padding: "8px 14px" }}>
-                    <div className="text">
-                      <span className="title">
-                        {r.title}
-                        {best && r.id === best.id && worthIt && (
-                          <CheckmarkCircleFilled style={{ color: "var(--ok)", marginLeft: 6, verticalAlign: "-2px" }} />
-                        )}
-                      </span>
-                      <span className="desc">
-                        {r.error
-                          ? r.error
-                          : r.failed.length
-                            ? `не открылись: ${r.failed.join(", ")}`
-                            : "открылись все"}
-                      </span>
-                    </div>
-                    <span
-                      style={{
-                        fontVariantNumeric: "tabular-nums",
-                        color: r.ok === r.total ? "var(--ok)" : r.ok ? "var(--mid)" : "var(--bad)",
-                      }}
-                    >
-                      {r.ok} / {r.total}
-                    </span>
-                    {r.id !== "none" && !r.error && (
-                      <Button size="small" onClick={() => props.onApply(r.id)}>
-                        Выбрать
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+              <>
+                {worthIt ? (
+                  <MessageBar intent="success">
+                    <MessageBarBody>
+                      Лучше всех — «{best!.title}»: {best!.ok} из {best!.total}, без обхода открылось {baseline!.ok}.
+                    </MessageBarBody>
+                  </MessageBar>
+                ) : (
+                  <MessageBar intent="warning">
+                    <MessageBarBody>
+                      Ни одна стратегия не открыла больше, чем без обхода ({baseline?.ok ?? 0} из{" "}
+                      {baseline?.total ?? 0}). Если сейчас включён VPN, выключите его и проверьте снова.
+                    </MessageBarBody>
+                  </MessageBar>
+                )}
 
-            {results && !worthIt && (
-              <MessageBar intent="info" icon={<DismissCircleRegular />}>
-                <MessageBarBody>
-                  Без обхода открылось столько же. Значит, эти сайты ваш провайдер сейчас не блокирует — обход можно
-                  не включать либо проверить на других адресах.
-                </MessageBarBody>
-              </MessageBar>
+                <div className="card probe-list">
+                  {results.map((r) => (
+                    <div className="probe-row" key={r.id}>
+                      <div className="text">
+                        <span className="title">
+                          {r.title}
+                          {best && r.id === best.id && worthIt && (
+                            <CheckmarkCircleFilled
+                              style={{ color: "var(--ok)", marginLeft: 6, verticalAlign: "-2px" }}
+                            />
+                          )}
+                        </span>
+                        <span className="desc">
+                          {r.error ? r.error : r.failed.length ? `не открылись: ${r.failed.join(", ")}` : "открылись все"}
+                        </span>
+                      </div>
+                      <span
+                        className="probe-score"
+                        style={{ color: r.ok === r.total ? "var(--ok)" : r.ok ? "var(--mid)" : "var(--bad)" }}
+                      >
+                        {r.ok} / {r.total}
+                      </span>
+                      {r.id !== "none" && !r.error && (
+                        <Button size="small" onClick={() => props.onApply(r.id)}>
+                          Выбрать
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </DialogContent>
           <DialogActions>
-            {/* Кнопка остаётся доступной: без единого элемента, который может принять
-                фокус, Fluent уводит его на страницу позади и та реагирует на нажатия. */}
+            {/* Кнопка остаётся доступной: без единого элемента, который может
+                принять фокус, Fluent уводит его на страницу позади. */}
             <Button onClick={props.onClose}>{running ? "Свернуть" : "Закрыть"}</Button>
             {worthIt && (
               <Button appearance="primary" onClick={() => props.onApply(best!.id)}>

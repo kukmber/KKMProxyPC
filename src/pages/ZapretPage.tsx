@@ -55,6 +55,14 @@ export function ZapretPage() {
   // замеры с ненулевым числом сайтов.
   const tested = probe?.some((p) => p.total > 0) ? probe : null;
   const working = tested ? tested.filter((p) => p.id !== "none" && !p.error && p.ok > 0).length : null;
+  // Лучшая — та, что открыла больше всех и больше, чем без обхода.
+  const baseline = tested?.find((p) => p.id === "none");
+  const bestId = (() => {
+    const top = tested
+      ?.filter((p) => p.id !== "none" && !p.error)
+      .reduce<ProbeResult | null>((a, b) => (!a || b.ok > a.ok ? b : a), null);
+    return top && baseline && top.ok > baseline.ok ? top.id : null;
+  })();
 
   const toggle = async (on: boolean) => {
     try {
@@ -240,7 +248,10 @@ export function ZapretPage() {
               disabled={busy || tuning}
             >
               <div className="text">
-                <span style={{ fontWeight: current === s.id ? 600 : 400 }}>{s.title}</span>
+                <span style={{ fontWeight: current === s.id ? 600 : 400 }}>
+                  {s.title}
+                  {s.id === bestId && <span className="best-badge">лучшая</span>}
+                </span>
                 <span className="hint">{s.about}</span>
               </div>
               {r && !r.error && (

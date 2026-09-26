@@ -17,6 +17,7 @@
   --accent-glow: rgba(16, 162, 127, 0.28);
   --accent-halo: rgba(16, 162, 127, 0.12);
   --seg-on: #ffffff;
+  --pick-bg: rgba(16, 162, 127, 0.14);
   --page-solid: #f3f3f3;
   --mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
 }
@@ -34,6 +35,7 @@
   --accent-glow: rgba(61, 195, 156, 0.30);
   --accent-halo: rgba(61, 195, 156, 0.10);
   --seg-on: rgba(255, 255, 255, 0.1);
+  --pick-bg: rgba(61, 195, 156, 0.18);
   --page-solid: #202020;
   --ok: #6ccb5f;
   --warn: #fce100;
@@ -652,7 +654,7 @@ textarea,
 }
 
 .srv.on {
-  background: var(--colorBrandBackground2);
+  background: var(--pick-bg);
 }
 
 .srv.on::before {
@@ -899,8 +901,8 @@ textarea,
 }
 
 .set.on {
-  background: var(--colorBrandBackground2);
-  border-color: transparent;
+  background: var(--pick-bg);
+  border-color: var(--colorBrandStroke1);
 }
 
 .set-body {
@@ -947,7 +949,8 @@ textarea,
 }
 
 .strategy-row.on {
-  background: var(--colorBrandBackground2);
+  background: var(--pick-bg);
+  box-shadow: inset 0 0 0 1px var(--colorBrandStroke1);
 }
 
 .strategy-row .text {
@@ -962,4 +965,59 @@ textarea,
 .strategy-list {
   max-height: 340px;
   overflow-y: auto;
+}
+
+/* Отметка лучшей стратегии по итогам подбора. */
+.best-badge {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--colorBrandForeground1);
+  background: var(--pick-bg);
+  box-shadow: inset 0 0 0 1px var(--colorBrandStroke1);
+}
+
+/* Результаты подбора: список прокручивается, кнопки окна остаются на месте. */
+.probe-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.probe-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.probe-row + .probe-row {
+  border-top: 1px solid var(--divider);
+}
+
+.probe-row .text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.probe-row .title {
+  font-size: 13px;
+}
+
+.probe-row .desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.probe-score {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  white-space: nowrap;
 }

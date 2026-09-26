@@ -235,6 +235,28 @@ pub fn split_args(raw: &str) -> Vec<String> {
     out
 }
 
+/// Набор сам создаёт пользовательские списки — но делает это в service.bat,
+/// который мы не запускаем. Поэтому создаём те же файлы сами: без них winws
+/// не стартует вовсе («cannot access ipset file»), и не работает ни одна
+/// стратегия.
+pub fn ensure_lists(app: &AppHandle) -> Result<()> {
+    let Some(dir) = core_dir(app) else { return Ok(()) };
+    let lists = dir.join("lists");
+    std::fs::create_dir_all(&lists)?;
+    // Значения те же, что подставляет сам набор.
+    for (name, body) in [
+        ("ipset-exclude-user.txt", "203.0.113.113/32\r\n"),
+        ("list-exclude-user.txt", "domain.example.abc\r\n"),
+    ] {
+        let path = lists.join(name);
+        if std::fs::metadata(&path).map_or(true, |m| m.len() == 0) {
+            crate::util::write_atomic(&path, body)?;
+        }
+    }
+    rebuild_hostlist(app)?;
+    Ok(())
+}
+
 /// Свой список сайтов набор Flowseal читает из lists\list-general-user.txt —
 /// туда и пишем отмеченные наборы вместе со своими адресами.
 fn user_list_path(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -291,15 +313,18 @@ async fn start_inner(app: &AppHandle) -> Result<()> {
     // Два обхода DPI одновременно перехватывают одни и те же пакеты через
     // WinDivert и рвут соединения — проверено: интернет пропадает целиком.
     if let Some((pid, owner)) = winsys::find_process("winws.exe") {
-        bail!("winws.exe уже запущен другой программой ({owner}, PID {pid}). Два обхода блокировок вместе ломают сеть — закройте ту программу");
+        bail!("Обход уже запущен другой программой:
+{owner}
+
+Два обхода блокировок одновременно рвут сеть. Выключите обход в той программе и попробуйте снова (PID {pid}).");
     }
     let st = app.state::<AppState>();
     let exe = cores::ensure(app, "zapret").await?;
     let dir = core_dir(app).context("нет папки ядра")?;
     let id = st.settings.lock().unwrap().zapret_strategy.clone();
     let title = strategy_title(&id);
-    // Свой список сайтов держим в актуальном виде — стратегии читают его файл.
-    let _ = rebuild_hostlist(app);
+    // Списки должны существовать до запуска — иначе ядро откажется стартовать.
+    ensure_lists(app)?;
     let args = build_args(&args_of(app, &id)?, &dir);
 
     let exited = Arc::new(AtomicBool::new(false));
@@ -366,6 +391,7 @@ async fn on_crash(app: &AppHandle, code: Option<i32>) {
 pub async fn check(app: &AppHandle, raw_args: &[String]) -> Result<()> {
     let exe = cores::ensure(app, "zapret").await?;
     let dir = core_dir(app).context("нет папки ядра")?;
+    ensure_lists(app)?;
     let mut args = build_args(raw_args, &dir);
     args.insert(0, OsString::from("--dry-run"));
     let out = tokio::process::Command::new(&exe)
@@ -454,7 +480,8 @@ mod tests {
 // ---------- автоподбор ----------
 
 /// Домены, на которых проверяем обход, если пользователь не задал свои.
-const DEFAULT_PROBES: &[&str] = &["discord.com", "www.youtube.com", "rutracker.org", "x.com"];
+const DEFAULT_PROBES: &[&str] =
+    &["discord.com", "discord.media", "youtube.com", "googlevideo.com", "x.com", "rutracker.org"];
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -504,7 +531,10 @@ pub async fn autotune(app: &AppHandle, domains: Vec<String>) -> Result<Vec<Probe
     if let Some((pid, owner)) = winsys::find_process("winws.exe") {
         let st = app.state::<AppState>();
         if st.zapret.status().state != "running" {
-            bail!("winws.exe уже запущен другой программой ({owner}, PID {pid}) — закройте её");
+            bail!("Обход уже запущен другой программой:
+{owner}
+
+Выключите обход в ней — иначе подбор ничего не покажет (PID {pid}).");
         }
     }
     let domains: Vec<String> = if domains.is_empty() {
@@ -520,7 +550,11 @@ pub async fn autotune(app: &AppHandle, domains: Vec<String>) -> Result<Vec<Probe
     }
     let exe = cores::ensure(app, "zapret").await?;
     let dir = core_dir(app).context("нет папки ядра")?;
-    let _ = rebuild_hostlist(app);
+    ensure_lists(app)?;
+    // Стратегии применяют обход только к адресам из своих списков. Если
+    // проверять сайт, которого там нет, результат всегда совпадёт с замером
+    // без обхода — поэтому на время проверки добавляем домены в свой список.
+    write_probe_list(app, &domains)?;
 
     // Кандидаты: сначала замер без обхода, затем все стратегии набора и своя.
     let mut candidates: Vec<(String, String, Option<Vec<String>>)> =
@@ -580,8 +614,28 @@ pub async fn autotune(app: &AppHandle, domains: Vec<String>) -> Result<Vec<Probe
         out.push(ProbeResult { id, title, ok, total: domains.len(), failed, error });
     }
 
+    // Возвращаем список в прежний вид, что бы ни случилось по дороге.
+    let _ = rebuild_hostlist(app);
     if was_running {
         start(app).await?;
     }
     Ok(out)
+}
+
+/// На время проверки дописывает проверяемые домены в пользовательский список.
+fn write_probe_list(app: &AppHandle, domains: &[String]) -> Result<()> {
+    let st = app.state::<AppState>();
+    let (sets, custom) = {
+        let s = st.settings.lock().unwrap();
+        (s.zapret_sets.clone(), s.zapret_custom_hosts.clone())
+    };
+    let mut hosts = crate::hostsets::collect(&sets, &custom);
+    for d in domains {
+        let d = d.trim().trim_start_matches("*.").to_ascii_lowercase();
+        if !d.is_empty() && !hosts.contains(&d) {
+            hosts.push(d);
+        }
+    }
+    let Some(path) = user_list_path(app) else { return Ok(()) };
+    crate::util::write_atomic(&path, format!("# Проверка KKMProxy\r\n{}", hosts.join("\r\n")))
 }
