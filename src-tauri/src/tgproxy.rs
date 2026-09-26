@@ -20,6 +20,7 @@ use tauri::{AppHandle, Emitter, Manager};
 pub struct TgStatus {
     /// stopped | starting | running | stopping
     pub state: String,
+    pub host: Option<String>,
     pub port: Option<u16>,
     pub secret: Option<String>,
     /// Готовая ссылка tg://proxy?… с префиксом dd (режим padded).
@@ -64,8 +65,37 @@ fn log(app: &AppHandle, level: &str, msg: impl Into<String>) {
 
 /// Секрет в ссылке идёт с префиксом `dd` — так Telegram включает режим padded,
 /// который труднее отличить по длине пакетов.
-fn link_for(port: u16, secret: &str) -> String {
-    format!("tg://proxy?server=127.0.0.1&port={port}&secret=dd{secret}")
+fn link_for(host: &str, port: u16, secret: &str) -> String {
+    format!("tg://proxy?server={host}&port={port}&secret=dd{secret}")
+}
+
+/// Адрес этого компьютера в локальной сети. Узнаётся без отправки данных:
+/// системе достаточно выбрать исходящий интерфейс для UDP-сокета.
+fn lan_ip() -> Option<String> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:53").ok()?;
+    Some(sock.local_addr().ok()?.ip().to_string())
+}
+
+/// Что подставлять в ссылку: сам адрес прослушивания, а для 0.0.0.0 —
+/// адрес компьютера в локальной сети, иначе ссылка никуда не приведёт.
+fn link_host(host: &str) -> String {
+    if host == "0.0.0.0" {
+        lan_ip().unwrap_or_else(|| "127.0.0.1".into())
+    } else {
+        host.to_string()
+    }
+}
+
+/// Создаёт новый случайный секрет и сохраняет его.
+pub fn regenerate_secret(app: &AppHandle) -> Result<String> {
+    let secret = util::random_hex(16);
+    app.state::<AppState>().update_settings(|s| s.tg_secret = Some(secret.clone()))?;
+    Ok(secret)
+}
+
+pub fn valid_secret(s: &str) -> bool {
+    s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 pub async fn start(app: &AppHandle) -> Result<()> {
@@ -92,15 +122,15 @@ pub async fn start(app: &AppHandle) -> Result<()> {
 async fn start_inner(app: &AppHandle) -> Result<()> {
     let st = app.state::<AppState>();
     let exe = cores::ensure(app, "tgws").await?;
-    let (want_port, secret) = {
+    let (host, want_port, secret) = {
         let s = st.settings.lock().unwrap();
-        (s.tg_port, s.tg_secret.clone())
+        (s.tg_host.clone(), s.tg_port, s.tg_secret.clone())
     };
     let port = if util::port_is_free(want_port) { want_port } else { util::free_port()? };
     // Секрет держим постоянным: иначе после каждого перезапуска ссылку
     // пришлось бы заново применять в Telegram.
     let secret = match secret {
-        Some(s) if s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit()) => s,
+        Some(s) if valid_secret(&s) => s,
         _ => {
             let s = util::random_hex(16);
             st.update_settings(|set| set.tg_secret = Some(s.clone()))?;
@@ -111,13 +141,13 @@ async fn start_inner(app: &AppHandle) -> Result<()> {
     let args: Vec<OsString> = vec![
         "--port".into(),
         port.to_string().into(),
-        // Слушаем только себя: прокси нужен этому компьютеру, наружу его открывать незачем.
+        // По умолчанию слушаем только себя; 0.0.0.0 открывает прокси для устройств в сети.
         "--host".into(),
-        "127.0.0.1".into(),
+        host.clone().into(),
         // Без этого ядро подставляет в ссылку самостоятельно определённый адрес — и когда включён
         // наш же VPN, им оказывается адрес из диапазона fake-ip (198.18.x.x).
         "--link-ip".into(),
-        "127.0.0.1".into(),
+        link_host(&host).into(),
         "--secret".into(),
         secret.clone().into(),
         // Список доменов Cloudflare: запасной путь, когда адреса Telegram режут.
@@ -144,14 +174,15 @@ async fn start_inner(app: &AppHandle) -> Result<()> {
     set_status(app, |s| {
         *s = TgStatus {
             state: "running".into(),
+            host: Some(host.clone()),
             port: Some(port),
             secret: Some(secret.clone()),
-            link: Some(link_for(port, &secret)),
+            link: Some(link_for(&link_host(&host), port, &secret)),
             started_at: Some(now_ms()),
             error: None,
         }
     });
-    log(app, "info", format!("Прокси для Telegram слушает 127.0.0.1:{port}"));
+    log(app, "info", format!("Прокси для Telegram слушает {host}:{port}"));
     Ok(())
 }
 
@@ -251,7 +282,7 @@ mod tests {
     #[test]
     fn link_uses_padded_prefix() {
         assert_eq!(
-            link_for(1443, "00112233445566778899aabbccddeeff"),
+            link_for("127.0.0.1", 1443, "00112233445566778899aabbccddeeff"),
             "tg://proxy?server=127.0.0.1&port=1443&secret=dd00112233445566778899aabbccddeeff"
         );
     }

@@ -19,6 +19,7 @@ export interface VpnStatus {
 
 export interface TgStatus {
   state: VpnState;
+  host?: string;
   port?: number;
   secret?: string;
   link?: string;
@@ -33,6 +34,45 @@ export interface ZapretStatus {
   strategy?: string;
 }
 
+export interface ProbeResult {
+  id: string;
+  title: string;
+  ok: number;
+  total: number;
+  failed: string[];
+  error?: string;
+}
+
+export interface AutotuneProgress {
+  step: number;
+  total: number;
+  title: string;
+}
+
+export interface HostSetInfo {
+  id: string;
+  title: string;
+  about: string;
+  count: number;
+}
+
+export interface HostsState {
+  sets: string[];
+  custom: string;
+  enabled: boolean;
+  total: number;
+  available: HostSetInfo[];
+}
+
+export interface Startup {
+  withWindows: boolean;
+  minimized: boolean;
+  vpn: boolean;
+  tg: boolean;
+  zapret: boolean;
+  tray: boolean;
+}
+
 export interface StrategyInfo {
   id: string;
   title: string;
@@ -44,8 +84,12 @@ export interface Settings {
   mode: Mode;
   connection: Connection;
   mixedPort: number;
+  tgHost: string;
   tgPort: number;
+  tgSecret?: string;
   zapretStrategy: string;
+  zapretCustom: string;
+  zapretHostlistOn: boolean;
 }
 
 export interface UserInfo {
@@ -113,12 +157,21 @@ export const api = {
   tgStart: () => invoke<void>("tg_start"),
   tgStop: () => invoke<void>("tg_stop"),
   tgConnections: () => invoke<number>("tg_connections"),
-  setTgPort: (port: number) => invoke<void>("set_tg_port", { port }),
+  setTgParams: (host: string, port: number, secret: string) =>
+    invoke<void>("set_tg_params", { host, port, secret }),
+  regenerateTgSecret: () => invoke<string>("regenerate_tg_secret"),
   zapretStatus: () => invoke<ZapretStatus>("zapret_status"),
   zapretStart: () => invoke<void>("zapret_start"),
   zapretStop: () => invoke<void>("zapret_stop"),
   zapretStrategies: () => invoke<StrategyInfo[]>("zapret_strategies"),
   setZapretStrategy: (id: string) => invoke<void>("set_zapret_strategy", { id }),
+  zapretHosts: () => invoke<HostsState>("zapret_hosts"),
+  setZapretHosts: (sets: string[], custom: string, enabled: boolean) =>
+    invoke<number>("set_zapret_hosts", { sets, custom, enabled }),
+  getStartup: () => invoke<Startup>("get_startup"),
+  setStartup: (value: Startup) => invoke<void>("set_startup", { value }),
+  setZapretCustom: (args: string) => invoke<void>("set_zapret_custom", { args }),
+  zapretAutotune: (domains: string[]) => invoke<ProbeResult[]>("zapret_autotune", { domains }),
   restartAll: () => invoke<string[]>("restart_all"),
   openExternal: (url: string) => openUrl(url),
   coreInfo: () => invoke<CoreInfo[]>("core_info"),

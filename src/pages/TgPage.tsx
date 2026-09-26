@@ -1,176 +1,164 @@
 import { useEffect, useState } from "react";
-import { Button, Field, Input, Spinner, Tooltip } from "@fluentui/react-components";
+import { Button, Field, Input, Tooltip } from "@fluentui/react-components";
 import {
+  ArrowSyncRegular,
   CopyRegular,
   OpenRegular,
-  PlayRegular,
   SendRegular,
-  StopRegular,
 } from "@fluentui/react-icons";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { api, formatDuration, TgStatus } from "../api";
-import { useNow, useTgStatus } from "../hooks";
+import { api } from "../api";
+import { useCores, useTgStatus } from "../hooks";
 import { useNotify } from "../toast";
+import { ServiceCard, UpdateBanner } from "../components/ServiceCard";
 
 export function TgPage() {
   const notify = useNotify();
   const status = useTgStatus();
-  const [port, setPort] = useState("");
-  const [conns, setConns] = useState(0);
-  const [busyPort, setBusyPort] = useState(false);
+  const [cores] = useCores();
+  const [host, setHost] = useState("127.0.0.1");
+  const [port, setPort] = useState("1443");
+  const [secret, setSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const core = cores.find((c) => c.id === "tgws");
+
+  const load = () =>
+    api.getSettings().then((s) => {
+      setHost(s.tgHost);
+      setPort(String(s.tgPort));
+      // Ключ показываем и до первого запуска — он уже сохранён в настройках.
+      if (s.tgSecret) setSecret(s.tgSecret);
+    });
 
   useEffect(() => {
-    api.getSettings().then((s) => setPort(String(s.tgPort)));
+    load();
   }, []);
 
-  // Своей статистики ядро не отдаёт — число клиентов считает Windows.
+  // Пока прокси не запускали, ключа в состоянии нет — берём его из настроек.
   useEffect(() => {
-    if (status.state !== "running") return setConns(0);
-    const tick = () => api.tgConnections().then(setConns).catch(() => {});
-    tick();
-    const id = setInterval(tick, 2000);
-    return () => clearInterval(id);
-  }, [status.state]);
+    if (status.secret) setSecret(status.secret);
+  }, [status.secret]);
 
   const running = status.state === "running";
-  const busy = status.state === "starting" || status.state === "stopping";
+  const realPort = running && status.port ? status.port : Number(port);
 
-  const toggle = async () => {
+  const toggle = async (on: boolean) => {
     try {
-      if (running || status.state === "starting") await api.tgStop();
-      else await api.tgStart();
+      if (on) await api.tgStart();
+      else await api.tgStop();
     } catch (e) {
       notify.error("Не удалось запустить прокси", e);
     }
   };
 
-  const applyPort = async () => {
-    const n = Number(port);
-    if (!Number.isInteger(n) || n < 1 || n > 65535) return notify.error("Порт должен быть числом от 1 до 65535");
-    setBusyPort(true);
+  const save = async () => {
+    setBusy(true);
     try {
-      await api.setTgPort(n);
-      notify.ok(running ? "Порт изменён, прокси перезапущен" : "Порт изменён");
+      await api.setTgParams(host, Number(port), secret);
+      notify.ok(running ? "Параметры сохранены, прокси перезапущен" : "Параметры сохранены");
     } catch (e) {
-      notify.error("Не удалось изменить порт", e);
+      notify.error("Параметры не подошли", e);
+      load();
     } finally {
-      setBusyPort(false);
+      setBusy(false);
+    }
+  };
+
+  const regenerate = async () => {
+    setBusy(true);
+    try {
+      const s = await api.regenerateTgSecret();
+      setSecret(s);
+      notify.ok("Новый ключ создан", "Ссылку в Telegram нужно применить заново");
+    } catch (e) {
+      notify.error("Не удалось создать ключ", e);
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <div className="page">
-      <h1 className="page-title">Прокси для Telegram</h1>
+      <h1 className="page-title">Telegram</h1>
 
-      <div className="card tg-hero">
-        <div className="orb small" data-state={status.state}>
-          <div className="orb-core">{busy ? <Spinner size="small" /> : <SendRegular style={{ fontSize: 28 }} />}</div>
-        </div>
-        <div className="text">
-          <span className="title" style={{ fontSize: 17, fontWeight: 600 }}>
-            {{ running: "Работает", starting: "Запуск…", stopping: "Остановка…", stopped: "Остановлен" }[status.state]}
-          </span>
-          <span className={`desc${status.error ? " error" : ""}`}>
-            {status.error ??
-              (running
-                ? "Telegram ходит через WebSocket — помогает, когда прямой доступ режут"
-                : "Запустите и примените ссылку в Telegram")}
-          </span>
-        </div>
-        {running && <Uptime status={status} conns={conns} />}
-        <Button
-          appearance={running || status.state === "starting" ? "secondary" : "primary"}
-          size="large"
-          icon={running || status.state === "starting" ? <StopRegular /> : <PlayRegular />}
-          disabled={status.state === "stopping"}
-          onClick={toggle}
-          style={{ borderRadius: 999, minWidth: 148 }}
-        >
-          {running || status.state === "starting" ? "Остановить" : "Запустить"}
-        </Button>
-      </div>
+      <UpdateBanner core={core} />
 
-      <div className="section-title">Ссылка для Telegram</div>
-      <div className="card">
-        <div className="row" style={{ gap: 10 }}>
-          <span className={`mono ellipsis link-box${running ? "" : " off"}`}>
+      <ServiceCard
+        icon={<SendRegular />}
+        title="Telegram"
+        subtitle={`${status.host ?? host}:${realPort}`}
+        state={status.state}
+        version={core?.version}
+        error={status.error}
+        hint={running ? "Прокси принимает подключения." : "Нажмите для запуска."}
+        onToggle={toggle}
+      />
+
+      <div className="section-title">Подключение</div>
+      <div className="card" style={{ padding: "14px 18px" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className={`mono ellipsis link-box${status.link ? "" : " off"}`}>
             {status.link ?? "Появится после запуска"}
           </span>
           <Tooltip content="Копировать ссылку" relationship="label">
             <Button
+              shape="circular"
               icon={<CopyRegular />}
               disabled={!status.link}
               onClick={() => writeText(status.link!).then(() => notify.ok("Ссылка скопирована"))}
             />
           </Tooltip>
-          <Button
-            appearance="primary"
-            icon={<OpenRegular />}
-            disabled={!status.link}
-            onClick={() =>
-              openUrl(status.link!).catch((e) =>
-                notify.error("Не удалось открыть Telegram", e),
-              )
-            }
-          >
-            Применить в Telegram
-          </Button>
+          <Tooltip content="Открыть в Telegram" relationship="label">
+            <Button
+              shape="circular"
+              appearance="primary"
+              icon={<OpenRegular />}
+              disabled={!status.link}
+              onClick={() => openUrl(status.link!).catch((e) => notify.error("Не удалось открыть Telegram", e))}
+            />
+          </Tooltip>
+          <Tooltip content="Создать новый секретный ключ" relationship="label">
+            <Button shape="circular" icon={<ArrowSyncRegular />} disabled={busy} onClick={regenerate} />
+          </Tooltip>
         </div>
+        <p className="hint" style={{ margin: "10px 0 0" }}>
+          Нажмите <OpenRegular style={{ verticalAlign: "-2px" }} /> для подключения одним нажатием. Вручную:
+          Telegram → Настройки → Продвинутые настройки → Тип соединения → Использовать прокси.
+        </p>
       </div>
-      <p className="hint" style={{ margin: "2px 4px" }}>
-        Кнопка открывает Telegram с готовыми настройками — останется подтвердить. Прокси слушает только этот компьютер,
-        другим устройствам ссылка не подойдёт.
-      </p>
 
-      <div className="section-title">Настройки</div>
-      <div className="card">
-        <div className="row">
-          <div className="text">
-            <span className="title">Порт</span>
-            <span className="desc">Если порт занят, прокси возьмёт свободный. Секрет постоянный — ссылка не меняется.</span>
-          </div>
-          <Field>
+      <div className="section-title">Параметры</div>
+      <div className="card" style={{ padding: "16px 18px" }}>
+        <div className="params">
+          <Field label="Хост">
+            <Input value={host} onChange={(_, d) => setHost(d.value.trim())} className="mono" />
+          </Field>
+          <Field label="Порт">
             <Input
               value={port}
               onChange={(_, d) => setPort(d.value.replace(/\D/g, "").slice(0, 5))}
-              onKeyDown={(e) => e.key === "Enter" && applyPort()}
-              style={{ width: 110 }}
               className="mono"
             />
           </Field>
-          <Button onClick={applyPort} disabled={busyPort}>
-            Применить
+          <Field label="Секретный ключ (32 знака, MTProto)" style={{ gridColumn: "1 / -1" }}>
+            <Input
+              value={secret}
+              onChange={(_, d) => setSecret(d.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 32))}
+              className="mono"
+            />
+          </Field>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
+          <Button appearance="primary" onClick={save} disabled={busy}>
+            Сохранить
           </Button>
+          <span className="hint">
+            127.0.0.1 — только этот компьютер, 0.0.0.0 — ещё и устройства в вашей сети. Если порт занят, прокси
+            возьмёт свободный.
+          </span>
         </div>
       </div>
-      {running && status.port !== undefined && status.port !== Number(port) && (
-        <p className="hint" style={{ margin: "2px 4px", color: "var(--mid)" }}>
-          Порт {port} занят другой программой — прокси слушает {status.port}. Ссылка выше уже с этим портом.
-        </p>
-      )}
     </div>
   );
-}
-
-function Uptime({ status, conns }: { status: TgStatus; conns: number }) {
-  const now = useNow(1000, true);
-  return (
-    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ fontSize: 19, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-        {formatDuration(now - (status.startedAt ?? now))}
-      </span>
-      <span className="hint">
-        {conns} {plural(conns, "подключение", "подключения", "подключений")}
-      </span>
-    </div>
-  );
-}
-
-function plural(n: number, one: string, few: string, many: string) {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
-  return many;
 }

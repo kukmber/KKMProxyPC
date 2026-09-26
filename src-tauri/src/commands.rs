@@ -8,7 +8,7 @@ use crate::zapret::{self, ZapretStatus};
 use crate::util::err_str;
 use crate::vpn::{self, VpnStatus};
 use crate::winsys;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 type R<T> = Result<T, String>;
@@ -170,15 +170,49 @@ pub async fn tg_connections(app: AppHandle) -> usize {
     tgproxy::connections(&app).await
 }
 
-/// Смена порта перезапускает прокси — ссылка с прежним портом станет недействительной.
+/// Смена адреса, порта или ключа перезапускает прокси — старая ссылка
+/// перестаёт действовать, поэтому её показываем заново.
 #[tauri::command]
-pub async fn set_tg_port(app: AppHandle, st: State<'_, AppState>, port: u16) -> R<()> {
-    st.update_settings(|s| s.tg_port = port).map_err(err_str)?;
+pub async fn set_tg_params(
+    app: AppHandle,
+    st: State<'_, AppState>,
+    host: String,
+    port: u16,
+    secret: String,
+) -> R<()> {
+    let host = host.trim().to_string();
+    if host.is_empty() {
+        return Err("Впишите адрес, например 127.0.0.1".into());
+    }
+    if port == 0 {
+        return Err("Порт должен быть от 1 до 65535".into());
+    }
+    let secret = secret.trim().to_ascii_lowercase();
+    if !tgproxy::valid_secret(&secret) {
+        return Err("Секретный ключ — ровно 32 знака из цифр и букв a–f".into());
+    }
+    st.update_settings(|s| {
+        s.tg_host = host;
+        s.tg_port = port;
+        s.tg_secret = Some(secret);
+    })
+    .map_err(err_str)?;
     if st.tg.status().state == "running" {
         tgproxy::stop(&app).await.map_err(err_str)?;
         tgproxy::start(&app).await.map_err(err_str)?;
     }
     Ok(())
+}
+
+/// Выдаёт новый случайный ключ: пригодится, если прежний куда-то утёк.
+#[tauri::command]
+pub async fn regenerate_tg_secret(app: AppHandle, st: State<'_, AppState>) -> R<String> {
+    let secret = tgproxy::regenerate_secret(&app).map_err(err_str)?;
+    if st.tg.status().state == "running" {
+        tgproxy::stop(&app).await.map_err(err_str)?;
+        tgproxy::start(&app).await.map_err(err_str)?;
+    }
+    Ok(secret)
 }
 
 // ---------- обход блокировок (zapret) ----------
@@ -217,7 +251,8 @@ pub fn zapret_strategies() -> Vec<StrategyInfo> {
 #[tauri::command]
 pub async fn set_zapret_strategy(app: AppHandle, st: State<'_, AppState>, id: String) -> R<()> {
     // Проверяем параметры до запуска: winws сам разберёт их и выйдет.
-    zapret::check(&app, &id).await.map_err(err_str)?;
+    let args = zapret::args_of(&app, &id).map_err(err_str)?;
+    zapret::check(&app, &args).await.map_err(err_str)?;
     st.update_settings(|s| s.zapret_strategy = id).map_err(err_str)?;
     if st.zapret.status().state == "running" {
         zapret::stop(&app).await.map_err(err_str)?;
@@ -250,4 +285,115 @@ pub async fn restart_all(app: AppHandle, st: State<'_, AppState>) -> R<Vec<Strin
         restarted.push("Zapret".to_string());
     }
     Ok(restarted)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostsState {
+    pub sets: Vec<String>,
+    pub custom: String,
+    pub enabled: bool,
+    pub total: usize,
+    pub available: Vec<crate::hostsets::HostSetInfo>,
+}
+
+#[tauri::command]
+pub fn zapret_hosts(st: State<AppState>) -> HostsState {
+    let s = st.settings.lock().unwrap();
+    HostsState {
+        total: crate::hostsets::collect(&s.zapret_sets, &s.zapret_custom_hosts).len(),
+        sets: s.zapret_sets.clone(),
+        custom: s.zapret_custom_hosts.clone(),
+        enabled: s.zapret_hostlist_on,
+        available: crate::hostsets::list(),
+    }
+}
+
+#[tauri::command]
+pub async fn set_zapret_hosts(
+    app: AppHandle,
+    st: State<'_, AppState>,
+    sets: Vec<String>,
+    custom: String,
+    enabled: bool,
+) -> R<usize> {
+    st.update_settings(|s| {
+        s.zapret_sets = sets;
+        s.zapret_custom_hosts = custom;
+        s.zapret_hostlist_on = enabled;
+    })
+    .map_err(err_str)?;
+    let total = zapret::rebuild_hostlist(&app).map_err(err_str)?;
+    if st.zapret.status().state == "running" {
+        zapret::stop(&app).await.map_err(err_str)?;
+        zapret::start(&app).await.map_err(err_str)?;
+    }
+    Ok(total)
+}
+
+/// Сохраняет свою стратегию, предварительно проверив её параметры.
+#[tauri::command]
+pub async fn set_zapret_custom(app: AppHandle, st: State<'_, AppState>, args: String) -> R<()> {
+    if !args.trim().is_empty() {
+        zapret::check(&app, &zapret::split_args(&args)).await.map_err(err_str)?;
+    }
+    st.update_settings(|s| s.zapret_custom = args).map_err(err_str)?;
+    if st.zapret.status().state == "running"
+        && st.settings.lock().unwrap().zapret_strategy == zapret::CUSTOM
+    {
+        zapret::stop(&app).await.map_err(err_str)?;
+        zapret::start(&app).await.map_err(err_str)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn zapret_autotune(app: AppHandle, domains: Vec<String>) -> R<Vec<zapret::ProbeResult>> {
+    zapret::autotune(&app, domains).await.map_err(err_str)
+}
+
+// ---------- запуск вместе с Windows ----------
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Startup {
+    pub with_windows: bool,
+    pub minimized: bool,
+    pub vpn: bool,
+    pub tg: bool,
+    pub zapret: bool,
+    pub tray: bool,
+}
+
+#[tauri::command]
+pub fn get_startup(app: AppHandle, st: State<AppState>) -> Startup {
+    use tauri_plugin_autostart::ManagerExt;
+    let s = st.settings.lock().unwrap();
+    Startup {
+        with_windows: app.autolaunch().is_enabled().unwrap_or(false),
+        minimized: s.start_minimized,
+        vpn: s.autostart_vpn,
+        tg: s.autostart_tg,
+        zapret: s.autostart_zapret,
+        tray: s.tray_enabled,
+    }
+}
+
+#[tauri::command]
+pub fn set_startup(app: AppHandle, st: State<AppState>, value: Startup) -> R<()> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    let was = manager.is_enabled().unwrap_or(false);
+    if value.with_windows != was {
+        let r = if value.with_windows { manager.enable() } else { manager.disable() };
+        r.map_err(|e| format!("не удалось изменить автозапуск: {e}"))?;
+    }
+    st.update_settings(|s| {
+        s.start_minimized = value.minimized;
+        s.autostart_vpn = value.vpn;
+        s.autostart_tg = value.tg;
+        s.autostart_zapret = value.zapret;
+        s.tray_enabled = value.tray;
+    })
+    .map_err(err_str)
 }

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Button, Link, Spinner } from "@fluentui/react-components";
+import { Button, Link, Spinner, Switch } from "@fluentui/react-components";
 import { ArrowSyncRegular, ArrowDownloadRegular, CheckmarkCircleRegular } from "@fluentui/react-icons";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, CoreInfo, PlatformInfo } from "../api";
+import { api, CoreInfo, PlatformInfo, Startup } from "../api";
 import { useCores } from "../hooks";
 import { useNotify } from "../toast";
 
@@ -16,12 +16,26 @@ export function SettingsPage() {
   const notify = useNotify();
   const [cores, setCores] = useCores();
   const [platform, setPlatform] = useState<PlatformInfo | null>(null);
+  const [startup, setStartup] = useState<Startup | null>(null);
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     api.platformInfo().then(setPlatform);
+    api.getStartup().then(setStartup);
   }, []);
+
+  const change = async (patch: Partial<Startup>) => {
+    if (!startup) return;
+    const next = { ...startup, ...patch };
+    setStartup(next);
+    try {
+      await api.setStartup(next);
+    } catch (e) {
+      setStartup(startup);
+      notify.error("Не удалось изменить настройку", e);
+    }
+  };
 
   const check = async () => {
     setChecking(true);
@@ -54,9 +68,65 @@ export function SettingsPage() {
 
   const pending = cores.filter((c) => c.updateAvailable || !c.installed);
 
+  const row = (title: string, desc: string, checked: boolean, on: (v: boolean) => void, disabled = false) => (
+    <div className="row">
+      <div className="text">
+        <span className="title">{title}</span>
+        <span className="desc">{desc}</span>
+      </div>
+      <Switch
+        checked={checked}
+        aria-label={title}
+        disabled={disabled || !startup}
+        onChange={(_, d) => on(d.checked)}
+      />
+    </div>
+  );
+
   return (
     <div className="page">
       <h1 className="page-title">Настройки</h1>
+
+      <div className="section-title">Запуск</div>
+      <div className="card">
+        {row(
+          "Запускать вместе с Windows",
+          "Программа появится в трее сразу после входа в систему",
+          startup?.withWindows ?? false,
+          (v) => change({ withWindows: v }),
+        )}
+        {row(
+          "Запускать свёрнутым",
+          "При старте вместе с Windows окно не открывается",
+          startup?.minimized ?? true,
+          (v) => change({ minimized: v }),
+          !startup?.withWindows || !startup?.tray,
+        )}
+        {row("Сразу включать VPN", "Подключение начнётся при запуске программы", startup?.vpn ?? false, (v) =>
+          change({ vpn: v }),
+        )}
+        {row("Сразу включать TgWsProxy", "Прокси для Telegram поднимется сам", startup?.tg ?? false, (v) =>
+          change({ tg: v }),
+        )}
+        {row(
+          "Сразу включать Zapret",
+          "Нужны права администратора, иначе включение не удастся",
+          startup?.zapret ?? false,
+          (v) => change({ zapret: v }),
+        )}
+      </div>
+
+      <div className="section-title">Окно</div>
+      <div className="card">
+        {row(
+          "Сворачивать в трей",
+          startup?.tray
+            ? "Крестик прячет окно, программа продолжает работать. Выход — через меню значка"
+            : "Крестик полностью закрывает программу и останавливает всё, что запущено",
+          startup?.tray ?? true,
+          (v) => change({ tray: v, minimized: v ? (startup?.minimized ?? true) : false }),
+        )}
+      </div>
 
       <div className="section-title">
         Ядра
@@ -66,7 +136,13 @@ export function SettingsPage() {
             Обновить всё
           </Button>
         )}
-        <Button appearance="subtle" size="small" icon={checking ? <Spinner size="tiny" /> : <ArrowSyncRegular />} onClick={check} disabled={checking}>
+        <Button
+          appearance="subtle"
+          size="small"
+          icon={checking ? <Spinner size="tiny" /> : <ArrowSyncRegular />}
+          onClick={check}
+          disabled={checking}
+        >
           Проверить
         </Button>
       </div>
@@ -113,7 +189,7 @@ export function SettingsPage() {
           <div className="text">
             <span className="title">Права администратора</span>
             <span className="desc">
-              {platform?.elevated ? "Есть — доступны TUN и обход блокировок" : "Нужны для режима TUN и обхода блокировок (zapret)"}
+              {platform?.elevated ? "Есть — доступны TUN и обход блокировок" : "Нужны для режима TUN и Zapret"}
             </span>
           </div>
           {platform && !platform.elevated && (

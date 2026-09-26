@@ -763,3 +763,197 @@ textarea,
   margin-top: 8px;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- карточка раздела и баннер обновления ---------- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--subtle-fill);
+  border: 1px solid var(--card-border);
+  margin-bottom: 10px;
+}
+
+.banner .text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.banner .title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.banner .desc,
+.service .desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.banner-icon,
+.service-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 20px;
+  background: var(--subtle-fill);
+  color: var(--text-secondary);
+}
+
+.banner-icon {
+  background: var(--colorBrandBackground2);
+  color: var(--colorBrandForeground1);
+}
+
+.service {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 16px 18px 12px;
+}
+
+.service.on .service-icon {
+  background: var(--colorBrandBackground2);
+  color: var(--colorBrandForeground1);
+}
+
+.service .text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.service-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.service-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.service-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.service-state {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.service-state.on {
+  color: var(--colorBrandForeground1);
+  font-weight: 600;
+}
+
+.service-foot .hint.error {
+  color: var(--bad);
+}
+
+.params {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 16px;
+}
+
+/* ---------- наборы доменов ---------- */
+
+.sets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.set {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.set:hover {
+  background: var(--subtle-fill);
+}
+
+.set.on {
+  background: var(--colorBrandBackground2);
+  border-color: transparent;
+}
+
+.set-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.set-title {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.caps {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin: 14px 0 6px;
+}
+
+.strategy-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.strategy-row:hover {
+  background: var(--subtle-fill);
+}
+
+.strategy-row.on {
+  background: var(--colorBrandBackground2);
+}
+
+.strategy-row .text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

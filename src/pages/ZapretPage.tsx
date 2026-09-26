@@ -1,38 +1,69 @@
 import { useEffect, useState } from "react";
-import { Button, Link, Radio, RadioGroup, Spinner } from "@fluentui/react-components";
-import { GlobeShieldRegular, PlayRegular, StopRegular } from "@fluentui/react-icons";
-import { api, formatDuration, StrategyInfo } from "../api";
-import { useNow, useZapretStatus } from "../hooks";
+import { Button, Checkbox, Link, Switch, Textarea, Tooltip } from "@fluentui/react-components";
+import {
+  ChevronDownRegular,
+  ChevronRightRegular,
+  CheckmarkCircleFilled,
+  DismissCircleRegular,
+  GlobeShieldRegular,
+  ListRegular,
+  WandRegular,
+} from "@fluentui/react-icons";
+import { api, HostsState, ProbeResult, StrategyInfo } from "../api";
+import { useCores, useZapretStatus } from "../hooks";
 import { useNotify } from "../toast";
+import { ServiceCard, UpdateBanner } from "../components/ServiceCard";
+import { AutotuneDialog } from "../components/AutotuneDialog";
+
+const CUSTOM = "custom";
+
+/** Результаты последнего подбора: переживают переход между вкладками. */
+let lastProbe: ProbeResult[] | null = null;
 
 export function ZapretPage() {
   const notify = useNotify();
   const status = useZapretStatus();
+  const [cores] = useCores();
   const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
   const [current, setCurrent] = useState("general");
+  const [custom, setCustom] = useState("");
+  const [hosts, setHosts] = useState<HostsState | null>(null);
+  const [hostsOpen, setHostsOpen] = useState(false);
+  const [customHosts, setCustomHosts] = useState("");
   const [elevated, setElevated] = useState(true);
   const [busy, setBusy] = useState(false);
-  const now = useNow(1000, status.state === "running");
+  const [tuning, setTuning] = useState(false);
+  const [probe, setProbe] = useState<ProbeResult[] | null>(lastProbe);
+  const core = cores.find((c) => c.id === "zapret");
 
   useEffect(() => {
     api.zapretStrategies().then(setStrategies);
-    api.getSettings().then((s) => setCurrent(s.zapretStrategy));
+    api.getSettings().then((s) => {
+      setCurrent(s.zapretStrategy);
+      setCustom(s.zapretCustom);
+    });
+    api.zapretHosts().then((h) => {
+      setHosts(h);
+      setCustomHosts(h.custom);
+    });
     api.platformInfo().then((p) => setElevated(p.elevated));
   }, []);
 
   const running = status.state === "running";
-  const working = status.state === "starting" || status.state === "stopping";
+  const title = current === CUSTOM ? "Своя" : (strategies.find((s) => s.id === current)?.title ?? current);
+  const working = probe ? probe.filter((p) => p.id !== "none" && !p.error && p.ok > 0).length : null;
 
-  const toggle = async () => {
+  const toggle = async (on: boolean) => {
     try {
-      if (running || status.state === "starting") await api.zapretStop();
-      else await api.zapretStart();
+      if (on) await api.zapretStart();
+      else await api.zapretStop();
     } catch (e) {
       notify.error("Не удалось включить обход", e);
     }
   };
 
   const pick = async (id: string) => {
+    if (id === current || busy) return;
     const prev = current;
     setCurrent(id);
     setBusy(true);
@@ -47,73 +78,236 @@ export function ZapretPage() {
     }
   };
 
+  const saveCustom = async () => {
+    setBusy(true);
+    try {
+      await api.setZapretCustom(custom);
+      notify.ok("Своя стратегия проверена и сохранена");
+    } catch (e) {
+      notify.error("winws не принял параметры", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveHosts = async (next: { sets?: string[]; custom?: string; enabled?: boolean }) => {
+    if (!hosts) return;
+    const sets = next.sets ?? hosts.sets;
+    const customText = next.custom ?? customHosts;
+    const enabled = next.enabled ?? hosts.enabled;
+    setBusy(true);
+    try {
+      const total = await api.setZapretHosts(sets, customText, enabled);
+      setHosts({ ...hosts, sets, custom: customText, enabled, total });
+      if (next.enabled !== undefined) {
+        notify.ok(enabled ? "Обход применяется только к списку" : "Обход применяется ко всем сайтам");
+      }
+    } catch (e) {
+      notify.error("Не удалось сохранить список", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleSet = (id: string) => {
+    if (!hosts) return;
+    const sets = hosts.sets.includes(id) ? hosts.sets.filter((s) => s !== id) : [...hosts.sets, id];
+    saveHosts({ sets });
+  };
+
+  const rows = [
+    ...strategies,
+    { id: CUSTOM, title: "Своя", about: "Аргументы winws как есть — для тех, кто знает, что пишет" },
+  ];
+
   return (
     <div className="page">
       <h1 className="page-title">Zapret</h1>
-      <p className="hint" style={{ margin: "-4px 4px 12px", maxWidth: 720 }}>
-        Обход блокировок — Discord, YouTube и другие сайты без помощи VPN. Работает для всей системы: трафик остаётся
-        прямым, меняется только то, по чему провайдер узнаёт запрос. Тот же приём помогает и прокси для Telegram.
-      </p>
 
-      <div className="card tg-hero">
-        <div className="orb small" data-state={status.state}>
-          <div className="orb-core">
-            {working ? <Spinner size="small" /> : <GlobeShieldRegular style={{ fontSize: 28 }} />}
+      <UpdateBanner core={core} />
+
+      <ServiceCard
+        icon={<GlobeShieldRegular />}
+        title="Обход блокировок (Zapret)"
+        subtitle={`Стратегия «${title}»${hosts?.enabled ? ` · только список (${hosts.total})` : " · все сайты"}`}
+        state={status.state}
+        version={core?.version}
+        error={status.error}
+        disabled={!elevated}
+        hint={
+          elevated
+            ? running
+              ? "Discord, YouTube и другие сайты без VPN."
+              : "Нажмите для запуска."
+            : "Нужны права администратора — обход работает через драйвер WinDivert."
+        }
+        onToggle={toggle}
+        action={
+          !elevated ? (
+            <Button onClick={() => api.restartAsAdmin(false).catch((e) => notify.error("Перезапуск отменён", e))}>
+              Перезапустить от администратора
+            </Button>
+          ) : undefined
+        }
+      />
+
+      <div className="card" style={{ padding: "14px 18px", marginTop: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <ListRegular style={{ fontSize: 20, color: "var(--text-secondary)" }} />
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 15, fontWeight: 600 }}>
+              Список сайтов{" "}
+              <span className="hint" style={{ fontWeight: 400 }}>{hosts?.total ?? 0} записей</span>
+            </span>
+            <span className="hint">
+              {hosts?.enabled ? "Обход применяется только к этим адресам" : "Сейчас обход применяется ко всем сайтам"}
+            </span>
           </div>
-        </div>
-        <div className="text">
-          <span className="title" style={{ fontSize: 17, fontWeight: 600 }}>
-            {{ running: "Включён", starting: "Включение…", stopping: "Выключение…", stopped: "Выключен" }[status.state]}
-          </span>
-          <span className={`desc${status.error ? " error" : ""}`}>
-            {status.error ??
-              (running
-                ? `Стратегия «${status.strategy}» · ${formatDuration(now - (status.startedAt ?? now))}`
-                : elevated
-                  ? "Включите и проверьте нужный сайт"
-                  : "Нужны права администратора — обход работает через драйвер WinDivert")}
-          </span>
-        </div>
-        {!elevated && !running ? (
-          <Button onClick={() => api.restartAsAdmin(false).catch((e) => notify.error("Перезапуск отменён", e))}>
-            Перезапустить от администратора
-          </Button>
-        ) : (
+          <Switch
+            checked={hosts?.enabled ?? false}
+            disabled={busy || !hosts}
+            onChange={(_, d) => saveHosts({ enabled: d.checked })}
+            label={hosts?.enabled ? "Только список" : "Все сайты"}
+          />
           <Button
-            appearance={running || status.state === "starting" ? "secondary" : "primary"}
-            size="large"
-            icon={running || status.state === "starting" ? <StopRegular /> : <PlayRegular />}
-            disabled={status.state === "stopping"}
-            onClick={toggle}
-            style={{ borderRadius: 999, minWidth: 148 }}
+            appearance="subtle"
+            icon={hostsOpen ? <ChevronDownRegular /> : <ChevronRightRegular />}
+            iconPosition="after"
+            onClick={() => setHostsOpen((v) => !v)}
           >
-            {running || status.state === "starting" ? "Выключить" : "Включить"}
+            {hostsOpen ? "Свернуть" : "Управление списком"}
           </Button>
+        </div>
+
+        {hostsOpen && hosts && (
+          <>
+            <div className="caps">Готовые наборы</div>
+            <div className="sets">
+              {hosts.available.map((s) => {
+                const on = hosts.sets.includes(s.id);
+                return (
+                  <div key={s.id} className={`set${on ? " on" : ""}`} onClick={() => toggleSet(s.id)}>
+                    <Checkbox checked={on} aria-label={s.title} onChange={() => toggleSet(s.id)} />
+                    <span className="set-body">
+                      <span className="set-title">
+                        {s.title}
+                        <span className="hint">{s.count} зап.</span>
+                      </span>
+                      <span className="hint">{s.about}</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="caps">Свои адреса</div>
+            <Textarea
+              value={customHosts}
+              onChange={(_, d) => setCustomHosts(d.value)}
+              placeholder={"example.com\n*.example.org\nmy.site.ru"}
+              resize="vertical"
+              textarea={{ className: "mono", style: { minHeight: 110 } }}
+              style={{ width: "100%" }}
+            />
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
+              <Button onClick={() => saveHosts({ custom: customHosts })} disabled={busy}>
+                Сохранить список
+              </Button>
+              <span className="hint">По одному адресу в строке. Поддомены подхватываются сами.</span>
+            </div>
+          </>
         )}
       </div>
 
-      <div className="section-title">Стратегия</div>
-      <div className="card" style={{ padding: "6px 18px 12px" }}>
-        <RadioGroup value={current} onChange={(_, d) => pick(d.value)} disabled={busy}>
-          {strategies.map((s) => (
-            <Radio
+      <div className="section-title">
+        Стратегии
+        {working !== null && (
+          <span className="hint" style={{ fontWeight: 400 }}>
+            {working} из {probe!.length - 1} рабочих
+          </span>
+        )}
+        <span className="spacer" />
+        <Button
+          appearance="subtle"
+          size="small"
+          icon={<WandRegular />}
+          onClick={() => setTuning(true)}
+          disabled={!elevated}
+        >
+          {probe ? "Перепроверить" : "Подобрать автоматически"}
+        </Button>
+      </div>
+      <div className="card" style={{ padding: 6 }}>
+        {rows.map((s) => {
+          const r = probe?.find((p) => p.id === s.id);
+          return (
+            <button
               key={s.id}
-              value={s.id}
-              label={
-                <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span>{s.title}</span>
-                  <span className="hint">{s.about}</span>
-                </span>
-              }
+              className={`strategy-row${current === s.id ? " on" : ""}`}
+              onClick={() => pick(s.id)}
+              disabled={busy || tuning}
+            >
+              <div className="text">
+                <span style={{ fontWeight: current === s.id ? 600 : 400 }}>{s.title}</span>
+                <span className="hint">{s.about}</span>
+              </div>
+              {r && !r.error && (
+                <Tooltip
+                  content={r.failed.length ? `не открылись: ${r.failed.join(", ")}` : "открылись все"}
+                  relationship="label"
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {r.ok > 0 ? (
+                      <CheckmarkCircleFilled style={{ color: "var(--ok)" }} />
+                    ) : (
+                      <DismissCircleRegular style={{ color: "var(--bad)" }} />
+                    )}
+                    <span className="hint" style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {r.ok}/{r.total}
+                    </span>
+                  </span>
+                </Tooltip>
+              )}
+            </button>
+          );
+        })}
+        {current === CUSTOM && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "4px 14px 12px" }}>
+            <Textarea
+              value={custom}
+              onChange={(_, d) => setCustom(d.value)}
+              placeholder="--wf-tcp=80,443 --dpi-desync=fake,split2 --dpi-desync-autottl=2"
+              resize="vertical"
+              textarea={{ className: "mono", style: { minHeight: 88 } }}
             />
-          ))}
-        </RadioGroup>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <Button appearance="primary" onClick={saveCustom} disabled={busy}>
+                Проверить и сохранить
+              </Button>
+              <span className="hint">Параметры прогоняются через winws — неверный набор не сохранится.</span>
+            </div>
+          </div>
+        )}
       </div>
       <p className="hint" style={{ margin: "2px 4px" }}>
-        Стратегии взяты из набора <Link onClick={() => api.openExternal("https://github.com/bol-van/zapret")}>bol-van/zapret</Link>.
-        Если сайт не открылся — попробуйте вторую: провайдеры фильтруют по-разному. Редактор своих стратегий, списки
-        доменов и автоподбор появятся позже.
+        Готовые стратегии взяты из набора{" "}
+        <Link onClick={() => api.openExternal("https://github.com/bol-van/zapret")}>bol-van/zapret</Link>. Провайдеры
+        фильтруют по-разному, поэтому нормально, что подходит не первая.
       </p>
+
+      <AutotuneDialog
+        open={tuning}
+        domains={[]}
+        onClose={() => setTuning(false)}
+        onResults={(r) => {
+          lastProbe = r;
+          setProbe(r);
+        }}
+        onApply={(id) => {
+          setTuning(false);
+          pick(id);
+        }}
+      />
     </div>
   );
 }

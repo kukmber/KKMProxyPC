@@ -16,11 +16,27 @@ pub struct Settings {
     /// аварийного завершения не оставить Windows с прокси на мёртвый порт.
     pub sysproxy_port: Option<u16>,
     /// Последние версии ядер на GitHub по итогам проверки.
-    /// Порт и постоянный секрет прокси для Telegram.
+    /// Адрес, порт и постоянный секрет прокси для Telegram.
+    pub tg_host: String,
     pub tg_port: u16,
     pub tg_secret: Option<String>,
-    /// Выбранная стратегия обхода DPI.
+    /// Выбранная стратегия обхода DPI: id встроенной или "custom".
     pub zapret_strategy: String,
+    /// Своя стратегия — аргументы winws как есть.
+    pub zapret_custom: String,
+    /// Применять обход только к доменам из списка.
+    pub zapret_hostlist_on: bool,
+    /// Отмеченные готовые наборы доменов и свои адреса.
+    pub zapret_sets: Vec<String>,
+    pub zapret_custom_hosts: String,
+    /// Что включать сразу после запуска программы.
+    pub autostart_vpn: bool,
+    pub autostart_tg: bool,
+    pub autostart_zapret: bool,
+    /// Прятать окно в трей вместо выхода при нажатии на крестик.
+    pub tray_enabled: bool,
+    /// Запускать свёрнутым, когда программа стартует вместе с Windows.
+    pub start_minimized: bool,
     pub core_latest: HashMap<String, String>,
     pub core_checked_at: u64,
 }
@@ -33,9 +49,19 @@ impl Default for Settings {
             connection: "sysproxy".into(),
             mixed_port: 7890,
             sysproxy_port: None,
+            tg_host: "127.0.0.1".into(),
             tg_port: 1443,
             tg_secret: None,
             zapret_strategy: "general".into(),
+            zapret_custom: String::new(),
+            zapret_hostlist_on: false,
+            zapret_sets: Vec::new(),
+            zapret_custom_hosts: String::new(),
+            autostart_vpn: false,
+            autostart_tg: false,
+            autostart_zapret: false,
+            tray_enabled: true,
+            start_minimized: true,
             core_latest: HashMap::new(),
             core_checked_at: 0,
         }

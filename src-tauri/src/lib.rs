@@ -2,6 +2,7 @@ mod child;
 mod commands;
 mod config;
 mod cores;
+mod hostsets;
 mod logs;
 mod paths;
 mod profiles;
@@ -30,10 +31,16 @@ pub fn run() {
         winsys::wait_for_pid(pid, 10_000);
     }
     let autoconnect = args.iter().any(|a| a == "--connect");
-    let minimized = args.iter().any(|a| a == "--minimized");
+    // --autostart добавляет Windows при запуске вместе с системой.
+    let autostarted = args.iter().any(|a| a == "--autostart");
+    let minimized = autostarted || args.iter().any(|a| a == "--minimized");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
@@ -50,14 +57,34 @@ pub fn run() {
                         tauri::window::EffectsBuilder::new().effect(tauri::window::Effect::Mica).build(),
                     );
                 }
-                if !minimized {
+                let hide_at_start = minimized
+                    && {
+                        let st = app.state::<state::AppState>();
+                        let s = st.settings.lock().unwrap();
+                        s.start_minimized && s.tray_enabled
+                    };
+                if !hide_at_start {
                     let _ = w.show();
                 }
             }
-            if autoconnect {
+            // Что поднять сразу: явно переданное --connect либо отмеченное в настройках.
+            let auto = {
+                let st = app.state::<state::AppState>();
+                let s = st.settings.lock().unwrap();
+                (autoconnect || s.autostart_vpn, s.autostart_tg, s.autostart_zapret)
+            };
+            if auto.0 || auto.1 || auto.2 {
                 let app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = vpn::start(&app).await;
+                    if auto.0 {
+                        let _ = vpn::start(&app).await;
+                    }
+                    if auto.1 {
+                        let _ = tgproxy::start(&app).await;
+                    }
+                    if auto.2 {
+                        let _ = zapret::start(&app).await;
+                    }
                 });
             }
             Ok(())
@@ -65,8 +92,18 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Крестик прячет окно в трей; выход — из меню значка.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                let to_tray = window
+                    .app_handle()
+                    .state::<state::AppState>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .tray_enabled;
+                if to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                // Иначе окно закрывается обычным образом и программа завершается.
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -94,13 +131,20 @@ pub fn run() {
             commands::tg_start,
             commands::tg_stop,
             commands::tg_connections,
-            commands::set_tg_port,
+            commands::set_tg_params,
+            commands::regenerate_tg_secret,
             commands::zapret_status,
             commands::zapret_start,
             commands::zapret_stop,
             commands::zapret_strategies,
             commands::set_zapret_strategy,
+            commands::zapret_hosts,
+            commands::set_zapret_hosts,
+            commands::set_zapret_custom,
+            commands::zapret_autotune,
             commands::restart_all,
+            commands::get_startup,
+            commands::set_startup,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
