@@ -48,17 +48,19 @@ pub const SPECS: &[Spec] = &[
     },
     Spec {
         id: "zapret",
-        title: "zapret",
-        repo: "bol-van/zapret",
-        exe: "winws.exe",
-        asset: |tag, name| name == format!("zapret-{tag}.zip"),
+        title: "Zapret",
+        // Набор Flowseal: готовые стратегии под российских провайдеров,
+        // списки сайтов и все нужные файлы в одном архиве.
+        repo: "Flowseal/zapret-discord-youtube",
+        exe: "bin/winws.exe",
+        asset: |tag, name| name == format!("zapret-discord-youtube-{tag}.zip"),
         place: |e| {
-            const BIN: &[&str] = &["winws.exe", "cygwin1.dll", "WinDivert.dll", "WinDivert64.sys"];
-            let file = e.rsplit('/').next()?;
-            if e.contains("/binaries/windows-x86_64/") && BIN.contains(&file) {
-                Some(file.into())
-            } else if e.contains("/files/fake/") && file.ends_with(".bin") {
-                Some(format!("fake/{file}"))
+            // В архиве всё лежит в папке с версией — её отбрасываем.
+            let rel = e.split_once('/').map_or(e, |(_, r)| r);
+            if rel.starts_with("bin/") || rel.starts_with("lists/") {
+                Some(rel.to_string())
+            } else if rel.ends_with(".bat") && !rel.contains('/') && rel != "service.bat" {
+                Some(rel.to_string())
             } else {
                 None
             }
@@ -326,4 +328,10 @@ mod tests {
         }
         out
     }
+}
+
+/// Папка установленного ядра — чтобы другие модули могли читать его файлы.
+pub fn installed_dir(app: &AppHandle, id: &str) -> Option<PathBuf> {
+    let s = spec(id).ok()?;
+    active_dir(app, s).map(|(dir, _)| dir)
 }

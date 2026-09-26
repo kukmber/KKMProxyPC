@@ -59,7 +59,6 @@ export interface HostSetInfo {
 export interface HostsState {
   sets: string[];
   custom: string;
-  enabled: boolean;
   total: number;
   available: HostSetInfo[];
 }
@@ -166,8 +165,8 @@ export const api = {
   zapretStrategies: () => invoke<StrategyInfo[]>("zapret_strategies"),
   setZapretStrategy: (id: string) => invoke<void>("set_zapret_strategy", { id }),
   zapretHosts: () => invoke<HostsState>("zapret_hosts"),
-  setZapretHosts: (sets: string[], custom: string, enabled: boolean) =>
-    invoke<number>("set_zapret_hosts", { sets, custom, enabled }),
+  setZapretHosts: (sets: string[], custom: string) =>
+    invoke<number>("set_zapret_hosts", { sets, custom }),
   getStartup: () => invoke<Startup>("get_startup"),
   setStartup: (value: Startup) => invoke<void>("set_startup", { value }),
   setZapretCustom: (args: string) => invoke<void>("set_zapret_custom", { args }),

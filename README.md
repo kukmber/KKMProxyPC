@@ -46,7 +46,7 @@ KKMProxy — оболочка над тремя проверенными про�
 |---|---|---|---|
 | **VPN** ([mihomo](https://github.com/MetaCubeX/mihomo)) | Весь трафик идёт через ваш сервер по подписке | Когда нужен доступ куда угодно и свой сервер есть | Только для режима TUN |
 | **TgWsProxy** ([tg-ws-proxy-rs](https://github.com/valnesfjord/tg-ws-proxy-rs)) | Telegram ходит через WebSocket | Telegram не грузит фото и не отправляет сообщения | Нет |
-| **Zapret** ([zapret](https://github.com/bol-van/zapret)) | Меняет пакеты так, что фильтр провайдера не узнаёт запрос | Discord, YouTube и другие сайты — без VPN, на полной скорости | Да |
+| **Zapret** ([набор Flowseal](https://github.com/Flowseal/zapret-discord-youtube) на ядре [bol-van/zapret](https://github.com/bol-van/zapret)) | Меняет пакеты так, что фильтр провайдера не узнаёт запрос | Discord, YouTube и другие сайты — без VPN, на полной скорости | Да |
 
 Всё три можно включать по отдельности или вместе.
 
@@ -182,12 +182,18 @@ Discord, YouTube и другие сайты без VPN. Трафик остаё�
 
 ### Стратегии
 
-- **Основная** — TCP 80/443 и QUIC. Подходит большинству провайдеров.
-- **Дробление** — без поддельных пакетов, на случай если основная не помогает.
+Берутся из набора [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube):
+два десятка готовых вариантов (`general`, `general (ALT)`, `general (ALT2)` и так
+далее), обкатанных на российских провайдерах. Программа читает их прямо из
+файлов набора, поэтому после обновления ядра список пополняется сам.
 
 Провайдеры фильтруют по-разному, поэтому нормально, что подходит не первая
-стратегия. Перед применением программа проверяет параметры и не даст включить
-заведомо нерабочий набор.
+стратегия. **Подобрать автоматически** прогоняет их по очереди и показывает,
+сколько сайтов открылось на каждой, вместе с замером без обхода — чтобы было
+видно, помогает ли обход вообще.
+
+Можно вписать и свою строку аргументов winws: перед сохранением она проверяется
+самим ядром.
 
 > Тот же приём помогает и Telegram: если TgWsProxy не нужен, попробуйте
 > сначала включить один Zapret.
@@ -371,6 +377,8 @@ Windows, вся работа с процессами, правами и сеть
 - [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) — ядро VPN
 - [valnesfjord/tg-ws-proxy-rs](https://github.com/valnesfjord/tg-ws-proxy-rs) —
   прокси для Telegram, порт [Flowseal/tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy)
-- [bol-van/zapret](https://github.com/bol-van/zapret) — обход DPI
+- [bol-van/zapret](https://github.com/bol-van/zapret) — ядро обхода DPI
+- [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) —
+  набор стратегий и списков сайтов под российских провайдеров
 - [romanvht/ByeByeDPI](https://github.com/romanvht/ByeByeDPI) и
   [hufrea/byedpi](https://github.com/hufrea/byedpi) — с них начиналась версия для Android

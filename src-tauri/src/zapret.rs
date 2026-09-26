@@ -62,159 +62,186 @@ fn log(app: &AppHandle, level: &str, msg: impl Into<String>) {
     app.state::<AppState>().logs.push(app, "dpi", level, msg);
 }
 
-pub struct Strategy {
-    pub id: &'static str,
-    pub title: &'static str,
-    pub about: &'static str,
-    /// Аргументы winws. `@fake/<файл>` подставляется путём к заготовке пакета.
-    args: &'static [&'static str],
-}
-
-/// Стратегии из набора zapret для России: первая подходит большинству.
-pub const STRATEGIES: &[Strategy] = &[
-    Strategy {
-        id: "general",
-        title: "Основная",
-        about: "TCP 80/443 и QUIC. Подходит большинству провайдеров",
-        args: &[
-            "--wf-tcp=80,443",
-            "--wf-udp=443,50000-50100",
-            "--filter-udp=443",
-            "--dpi-desync=fake",
-            "--dpi-desync-repeats=6",
-            "--dpi-desync-fake-quic=@fake/quic_initial_www_google_com.bin",
-            "--new",
-            "--filter-udp=50000-50100",
-            "--filter-l7=discord,stun",
-            "--dpi-desync=fake",
-            "--dpi-desync-repeats=6",
-            "--new",
-            "--filter-tcp=80",
-            "--dpi-desync=fake,split2",
-            "--dpi-desync-autottl=2",
-            "--dpi-desync-fooling=md5sig",
-            "--new",
-            "--filter-tcp=443",
-            "--dpi-desync=fake,split",
-            "--dpi-desync-autottl=2",
-            "--dpi-desync-fooling=badseq",
-            "--dpi-desync-fake-tls=@fake/tls_clienthello_www_google_com.bin",
-        ],
-    },
-    Strategy {
-        id: "split",
-        title: "Дробление",
-        about: "Без поддельных пакетов — когда основная не помогает",
-        args: &[
-            "--wf-tcp=80,443",
-            "--wf-udp=443",
-            "--filter-udp=443",
-            "--dpi-desync=fake",
-            "--dpi-desync-repeats=8",
-            "--dpi-desync-fake-quic=@fake/quic_initial_www_google_com.bin",
-            "--new",
-            "--filter-tcp=80,443",
-            "--dpi-desync=split2",
-            "--dpi-desync-split-pos=1",
-            "--dpi-desync-split-seqovl=1",
-        ],
-    },
-];
-
-pub fn strategy(id: &str) -> &'static Strategy {
-    STRATEGIES.iter().find(|s| s.id == id).unwrap_or(&STRATEGIES[0])
-}
-
-/// Аргументы для запуска: подставляет пути к заготовкам пакетов и, если включён
-/// список доменов, ограничивает им каждый профиль (кроме UDP-профиля Discord,
-/// где имени сайта в пакете нет).
-fn build_args(args: &[String], dir: &Path, hostlist: Option<&Path>) -> Vec<OsString> {
-    let expand = |a: &str| -> OsString {
-        match a.split_once("=@") {
-            Some((key, rel)) => {
-                let mut v = OsString::from(key);
-                v.push("=");
-                v.push(dir.join(rel));
-                v
-            }
-            None => OsString::from(a),
-        }
-    };
-    let mut out: Vec<OsString> = Vec::new();
-    for profile in args.split(|a| a == "--new") {
-        if !out.is_empty() {
-            out.push(OsString::from("--new"));
-        }
-        for a in profile {
-            out.push(expand(a));
-        }
-        let is_discord = profile.iter().any(|a| a.contains("discord"));
-        if let Some(path) = hostlist.filter(|_| !is_discord && !profile.is_empty()) {
-            let mut v = OsString::from("--hostlist=");
-            v.push(path);
-            out.push(v);
-        }
-    }
-    out
-}
-
-/// Набор аргументов выбранной стратегии: встроенной или своей.
-fn strategy_args(set: &crate::settings::Settings) -> Result<(String, Vec<String>)> {
-    if set.zapret_strategy == CUSTOM {
-        let raw = set.zapret_custom.trim();
-        if raw.is_empty() {
-            bail!("Своя стратегия пустая — впишите аргументы winws или выберите готовую");
-        }
-        return Ok(("Своя".to_string(), split_args(raw)));
-    }
-    let s = strategy(&set.zapret_strategy);
-    Ok((s.title.to_string(), s.args.iter().map(|a| a.to_string()).collect()))
+/// Стратегия — один .bat-файл из набора Flowseal: имя файла и строка запуска
+/// winws внутри него. Свои стратегии не выдумываем: перебором проверяется то,
+/// что уже собрано и обкатано сообществом.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyInfo {
+    pub id: String,
+    pub title: String,
+    pub about: String,
 }
 
 /// Идентификатор своей стратегии.
 pub const CUSTOM: &str = "custom";
+
+/// Папка ядра: внутри bin\winws.exe, lists\ и .bat-файлы стратегий.
+fn core_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    cores::installed_dir(app, "zapret")
+}
+
+/// Разбирает .bat: склеивает строку запуска winws (перенос — символ `^`)
+/// и подставляет переменные, которые задаёт сам набор.
+fn parse_bat(text: &str, dir: &Path) -> Option<Vec<String>> {
+    let lines: Vec<&str> = text.lines().collect();
+    let idx = lines.iter().position(|l| l.contains("winws.exe"))?;
+    let mut joined = String::new();
+    for line in &lines[idx..] {
+        let trimmed = line.trim_end();
+        let more = trimmed.ends_with('^');
+        joined.push(' ');
+        joined.push_str(trimmed.trim_end_matches('^').trim());
+        if !more {
+            break;
+        }
+    }
+    // Всё, что идёт после пути к winws.exe, — это его аргументы.
+    let args_part = joined.split("winws.exe\"").nth(1)?;
+    let bin = dir.join("bin").to_string_lossy().into_owned() + "\\";
+    let lists = dir.join("lists").to_string_lossy().into_owned() + "\\";
+    let replaced = args_part
+        .replace("%BIN%", &bin)
+        .replace("%LISTS%", &lists)
+        // Фильтр игр в наборе по умолчанию выключен и подменяется портом-заглушкой.
+        .replace("%GameFilterTCP%", "12")
+        .replace("%GameFilterUDP%", "12");
+    let args = split_args(&replaced);
+    (!args.is_empty()).then_some(args)
+}
+
+/// Короткое описание стратегии: чем именно она «портит» пакеты.
+fn describe(text: &str) -> String {
+    if text.to_uppercase().contains("NOT RECOMMENDED") {
+        return "Не рекомендуется — только если ничего другое не помогло".into();
+    }
+    let mut methods: Vec<String> = Vec::new();
+    for part in text.split("--dpi-desync=").skip(1) {
+        let m = part.split_whitespace().next().unwrap_or("");
+        if !m.is_empty() && !methods.iter().any(|x| x == m) {
+            methods.push(m.to_string());
+        }
+    }
+    if methods.is_empty() {
+        "Набор Flowseal".into()
+    } else {
+        format!("Приёмы: {}", methods.join(", "))
+    }
+}
+
+/// Список стратегий — все .bat-файлы из папки ядра.
+pub fn list_strategies(app: &AppHandle) -> Vec<StrategyInfo> {
+    let Some(dir) = core_dir(app) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let mut out: Vec<StrategyInfo> = entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str())? != "bat" {
+                return None;
+            }
+            let id = path.file_stem()?.to_string_lossy().into_owned();
+            let text = std::fs::read_to_string(&path).ok()?;
+            parse_bat(&text, &dir)?;
+            Some(StrategyInfo { title: id.clone(), about: describe(&text), id })
+        })
+        .collect();
+    // «general» первой, дальше по алфавиту с учётом чисел: ALT2 раньше ALT10.
+    out.sort_by_key(|s| (s.id != "general", natural_key(&s.id)));
+    out
+}
+
+/// Ключ сортировки, в котором числа сравниваются как числа.
+fn natural_key(name: &str) -> Vec<(String, u64)> {
+    let mut out = Vec::new();
+    let mut chars = name.chars().peekable();
+    while chars.peek().is_some() {
+        let text: String = std::iter::from_fn(|| chars.next_if(|c| !c.is_ascii_digit())).collect();
+        let digits: String = std::iter::from_fn(|| chars.next_if(|c| c.is_ascii_digit())).collect();
+        out.push((text.to_lowercase(), digits.parse().unwrap_or(0)));
+    }
+    out
+}
+
+/// Аргументы стратегии по её идентификатору.
+pub fn args_of(app: &AppHandle, id: &str) -> Result<Vec<String>> {
+    if id == CUSTOM {
+        let raw = app.state::<AppState>().settings.lock().unwrap().zapret_custom.trim().to_string();
+        if raw.is_empty() {
+            bail!("Своя стратегия пустая — впишите аргументы winws или выберите готовую");
+        }
+        return Ok(split_args(&raw));
+    }
+    let dir = core_dir(app).context("ядро zapret не установлено")?;
+    let path = dir.join(format!("{id}.bat"));
+    let text = std::fs::read_to_string(&path).with_context(|| format!("нет файла стратегии {id}.bat"))?;
+    parse_bat(&text, &dir).with_context(|| format!("не удалось разобрать {id}.bat"))
+}
+
+/// Название выбранной стратегии для подписи в интерфейсе.
+fn strategy_title(id: &str) -> String {
+    if id == CUSTOM {
+        "Своя".into()
+    } else {
+        id.to_string()
+    }
+}
+
+/// Превращает строки аргументов в то, что примет процесс.
+/// `@fake/<файл>` в своей стратегии заменяется путём к заготовке пакета.
+fn build_args(args: &[String], dir: &Path) -> Vec<OsString> {
+    args.iter()
+        .map(|a| match a.split_once("=@") {
+            Some((key, rel)) => {
+                let mut v = OsString::from(key);
+                v.push("=");
+                v.push(dir.join("bin").join(rel.trim_start_matches("fake/")));
+                v
+            }
+            None => OsString::from(a.as_str()),
+        })
+        .collect()
+}
 
 /// Разбивает строку аргументов по пробелам и переводам строк, уважая кавычки.
 pub fn split_args(raw: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut quote: Option<char> = None;
+    let mut has_token = false;
     for c in raw.chars() {
         match (quote, c) {
             (Some(q), _) if c == q => quote = None,
             (Some(_), _) => cur.push(c),
-            (None, '"') | (None, '\'') => quote = Some(c),
+            (None, '"') | (None, '\'') => {
+                quote = Some(c);
+                has_token = true;
+            }
             (None, _) if c.is_whitespace() => {
-                if !cur.is_empty() {
+                if has_token {
                     out.push(std::mem::take(&mut cur));
+                    has_token = false;
                 }
             }
-            (None, _) => cur.push(c),
+            (None, _) => {
+                cur.push(c);
+                has_token = true;
+            }
         }
     }
-    if !cur.is_empty() {
+    if has_token {
         out.push(cur);
     }
     out
 }
 
-/// Файл со списком доменов. Лежит рядом с настройками, а не в папке ядра:
-/// папка ядра при обновлении заменяется целиком.
-fn hostlist_path(app: &AppHandle) -> std::path::PathBuf {
-    app.state::<AppState>().paths.root.join("zapret-hostlist.txt")
+/// Свой список сайтов набор Flowseal читает из lists\list-general-user.txt —
+/// туда и пишем отмеченные наборы вместе со своими адресами.
+fn user_list_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    Some(core_dir(app)?.join("lists").join("list-general-user.txt"))
 }
 
-/// Путь к списку доменов, если он включён и не пуст.
-fn active_hostlist(app: &AppHandle) -> Option<std::path::PathBuf> {
-    let st = app.state::<AppState>();
-    if !st.settings.lock().unwrap().zapret_hostlist_on {
-        return None;
-    }
-    let p = hostlist_path(app);
-    std::fs::metadata(&p).ok().filter(|m| m.len() > 0).map(|_| p)
-}
-
-/// Пересобирает файл списка из отмеченных наборов и своих адресов.
+/// Пересобирает свой список из отмеченных наборов и вписанных адресов.
 /// Возвращает число записей.
 pub fn rebuild_hostlist(app: &AppHandle) -> Result<usize> {
     let st = app.state::<AppState>();
@@ -222,9 +249,16 @@ pub fn rebuild_hostlist(app: &AppHandle) -> Result<usize> {
         let s = st.settings.lock().unwrap();
         (s.zapret_sets.clone(), s.zapret_custom_hosts.clone())
     };
-    // По одному адресу в строке — формат zapret; поддомены подхватываются сами.
     let hosts = crate::hostsets::collect(&sets, &custom);
-    crate::util::write_atomic(&hostlist_path(app), hosts.join("\r\n"))?;
+    let Some(path) = user_list_path(app) else { return Ok(hosts.len()) };
+    // Пустой файл набор считает ошибкой, поэтому строка-пояснение остаётся всегда.
+    let mut text = String::from("# Список KKMProxy: наборы и свои адреса\r\n");
+    if hosts.is_empty() {
+        text.push_str("domain.example.abc\r\n");
+    } else {
+        text.push_str(&hosts.join("\r\n"));
+    }
+    crate::util::write_atomic(&path, text)?;
     Ok(hosts.len())
 }
 
@@ -261,12 +295,12 @@ async fn start_inner(app: &AppHandle) -> Result<()> {
     }
     let st = app.state::<AppState>();
     let exe = cores::ensure(app, "zapret").await?;
-    let dir = exe.parent().context("нет папки ядра")?.to_path_buf();
-    let (title, raw_args) = {
-        let set = st.settings.lock().unwrap();
-        strategy_args(&set)?
-    };
-    let args = build_args(&raw_args, &dir, active_hostlist(app).as_deref());
+    let dir = core_dir(app).context("нет папки ядра")?;
+    let id = st.settings.lock().unwrap().zapret_strategy.clone();
+    let title = strategy_title(&id);
+    // Свой список сайтов держим в актуальном виде — стратегии читают его файл.
+    let _ = rebuild_hostlist(app);
+    let args = build_args(&args_of(app, &id)?, &dir);
 
     let exited = Arc::new(AtomicBool::new(false));
     let running = child::spawn(
@@ -331,8 +365,8 @@ async fn on_crash(app: &AppHandle, code: Option<i32>) {
 /// Проверяет набор аргументов без запуска: winws разбирает их и выходит.
 pub async fn check(app: &AppHandle, raw_args: &[String]) -> Result<()> {
     let exe = cores::ensure(app, "zapret").await?;
-    let dir = exe.parent().context("нет папки ядра")?.to_path_buf();
-    let mut args = build_args(raw_args, &dir, active_hostlist(app).as_deref());
+    let dir = core_dir(app).context("нет папки ядра")?;
+    let mut args = build_args(raw_args, &dir);
     args.insert(0, OsString::from("--dry-run"));
     let out = tokio::process::Command::new(&exe)
         .args(&args)
@@ -350,14 +384,6 @@ pub async fn check(app: &AppHandle, raw_args: &[String]) -> Result<()> {
         bail!("{}", line.trim());
     }
     Ok(())
-}
-
-/// Аргументы стратегии по её идентификатору — для проверки перед сохранением.
-pub fn args_of(app: &AppHandle, id: &str) -> Result<Vec<String>> {
-    let st = app.state::<AppState>();
-    let mut set = st.settings.lock().unwrap().clone();
-    set.zapret_strategy = id.to_string();
-    Ok(strategy_args(&set)?.1)
 }
 
 /// winws пишет простым текстом, уровень отмечает словами в начале строки.
@@ -378,46 +404,50 @@ fn parse_line(line: &str) -> (String, String) {
 mod tests {
     use super::*;
 
-    fn owned(id: &str) -> Vec<String> {
-        strategy(id).args.iter().map(|a| a.to_string()).collect()
+    /// Строка запуска из настоящего .bat набора Flowseal (сокращённая).
+    const BAT: &str = concat!(
+        "@echo off\r\n",
+        "chcp 65001 > nul\r\n",
+        ":: 65001 - UTF-8\r\n",
+        "set \"BIN=%~dp0bin\\\"\r\n",
+        "start \"zapret: %~n0\" /min \"%BIN%winws.exe\" --wf-tcp=80,443,%GameFilterTCP% --wf-udp=443 ^\r\n",
+        "--filter-udp=443 --hostlist=\"%LISTS%list-general.txt\" --dpi-desync=fake --new ^\r\n",
+        "--filter-tcp=443 --dpi-desync=multisplit --dpi-desync-split-seqovl-pattern=\"%BIN%tls_clienthello_www_google_com.bin\"\r\n"
+    );
+
+    #[test]
+    fn parses_flowseal_bat() {
+        let args = parse_bat(BAT, Path::new(r"C:\cores\zapret")).unwrap();
+        assert_eq!(args[0], "--wf-tcp=80,443,12", "фильтр игр заменяется заглушкой");
+        assert!(args.contains(&r"--hostlist=C:\cores\zapret\lists\list-general.txt".to_string()));
+        assert!(args.contains(
+            &r"--dpi-desync-split-seqovl-pattern=C:\cores\zapret\bin\tls_clienthello_www_google_com.bin".to_string()
+        ));
+        // Переносы строк склеены: профили идут одной командой.
+        assert_eq!(args.iter().filter(|a| *a == "--new").count(), 1);
     }
 
     #[test]
-    fn fake_files_get_absolute_paths() {
-        let args = build_args(&owned("general"), Path::new("C:\\cores\\zapret"), None);
-        let tls = args.iter().find(|a| a.to_string_lossy().starts_with("--dpi-desync-fake-tls=")).unwrap();
-        assert_eq!(
-            tls.to_string_lossy(),
-            "--dpi-desync-fake-tls=C:\\cores\\zapret\\fake/tls_clienthello_www_google_com.bin"
-        );
-        // Обычные параметры не трогаем.
-        assert!(args.iter().any(|a| a == "--dpi-desync-autottl=2"));
+    fn describes_by_methods() {
+        assert_eq!(describe(BAT), "Приёмы: fake, multisplit");
+        assert!(describe(":: NOT RECOMMENDED\nwinws.exe").starts_with("Не рекомендуется"));
     }
 
     #[test]
-    fn hostlist_skips_discord_profile() {
-        let list = Path::new(r"C:\data\hostlist.txt");
-        let args = build_args(&owned("general"), Path::new(r"C:\cores\zapret"), Some(list));
-        let joined: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        // По профилю на каждый --new: их четыре, но у discord списка быть не должно.
-        assert_eq!(joined.iter().filter(|a| a.starts_with("--hostlist=")).count(), 3);
-        let discord = joined.iter().position(|a| a.contains("discord")).unwrap();
-        let next_new = joined[discord..].iter().position(|a| a == "--new").unwrap() + discord;
-        assert!(!joined[discord..next_new].iter().any(|a| a.starts_with("--hostlist=")));
+    fn sorts_alt2_before_alt10() {
+        let mut ids = vec!["general (ALT10)", "general (ALT2)", "general"];
+        ids.sort_by_key(|id| (*id != "general", natural_key(id)));
+        assert_eq!(ids, vec!["general", "general (ALT2)", "general (ALT10)"]);
     }
 
     #[test]
     fn splits_quoted_args() {
         assert_eq!(
-            split_args("--wf-tcp=80,443  --dpi-desync=fake
---comment=\"два слова\""),
-            vec!["--wf-tcp=80,443", "--dpi-desync=fake", "--comment=два слова"]
+            split_args("--wf-tcp=80,443  --hostlist=\"C:\\два слова\\list.txt\""),
+            vec!["--wf-tcp=80,443", "--hostlist=C:\\два слова\\list.txt"]
         );
-    }
-
-    #[test]
-    fn unknown_strategy_falls_back() {
-        assert_eq!(strategy("нет такой").id, "general");
+        // Пустые кавычки — это пустой аргумент, а не отсутствие аргумента.
+        assert_eq!(split_args("--a=\"\" --b"), vec!["--a=", "--b"]);
     }
 }
 
@@ -489,18 +519,22 @@ pub async fn autotune(app: &AppHandle, domains: Vec<String>) -> Result<Vec<Probe
         stop(app).await?;
     }
     let exe = cores::ensure(app, "zapret").await?;
-    let dir = exe.parent().context("нет папки ядра")?.to_path_buf();
-    let hostlist = active_hostlist(app);
+    let dir = core_dir(app).context("нет папки ядра")?;
+    let _ = rebuild_hostlist(app);
 
-    // Кандидаты: сначала «как есть», затем встроенные, затем своя.
+    // Кандидаты: сначала замер без обхода, затем все стратегии набора и своя.
     let mut candidates: Vec<(String, String, Option<Vec<String>>)> =
         vec![("none".into(), "Без обхода".into(), None)];
-    for s in STRATEGIES {
-        candidates.push((s.id.into(), s.title.into(), Some(s.args.iter().map(|a| a.to_string()).collect())));
+    for s in list_strategies(app) {
+        match args_of(app, &s.id) {
+            Ok(args) => candidates.push((s.id, s.title, Some(args))),
+            Err(_) => continue,
+        }
     }
-    let custom = st.settings.lock().unwrap().zapret_custom.trim().to_string();
-    if !custom.is_empty() {
-        candidates.push((CUSTOM.into(), "Своя".into(), Some(split_args(&custom))));
+    if !st.settings.lock().unwrap().zapret_custom.trim().is_empty() {
+        if let Ok(args) = args_of(app, CUSTOM) {
+            candidates.push((CUSTOM.into(), "Своя".into(), Some(args)));
+        }
     }
 
     let total = candidates.len();
@@ -511,7 +545,7 @@ pub async fn autotune(app: &AppHandle, domains: Vec<String>) -> Result<Vec<Probe
         let mut error = None;
         if let Some(raw) = &args {
             let exited = Arc::new(AtomicBool::new(false));
-            let built = build_args(raw, &dir, hostlist.as_deref());
+            let built = build_args(raw, &dir);
             match child::spawn(
                 app,
                 Spawn {

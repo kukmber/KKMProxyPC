@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Checkbox, Link, Switch, Textarea, Tooltip } from "@fluentui/react-components";
+import { Button, Checkbox, Link, Textarea, Tooltip } from "@fluentui/react-components";
 import {
   ChevronDownRegular,
   ChevronRightRegular,
@@ -51,7 +51,10 @@ export function ZapretPage() {
 
   const running = status.state === "running";
   const title = current === CUSTOM ? "Своя" : (strategies.find((s) => s.id === current)?.title ?? current);
-  const working = probe ? probe.filter((p) => p.id !== "none" && !p.error && p.ok > 0).length : null;
+  // Счёт «рабочих» показываем только после настоящей проверки: у неё есть
+  // замеры с ненулевым числом сайтов.
+  const tested = probe?.some((p) => p.total > 0) ? probe : null;
+  const working = tested ? tested.filter((p) => p.id !== "none" && !p.error && p.ok > 0).length : null;
 
   const toggle = async (on: boolean) => {
     try {
@@ -90,18 +93,15 @@ export function ZapretPage() {
     }
   };
 
-  const saveHosts = async (next: { sets?: string[]; custom?: string; enabled?: boolean }) => {
+  const saveHosts = async (next: { sets?: string[]; custom?: string }) => {
     if (!hosts) return;
     const sets = next.sets ?? hosts.sets;
     const customText = next.custom ?? customHosts;
-    const enabled = next.enabled ?? hosts.enabled;
     setBusy(true);
     try {
-      const total = await api.setZapretHosts(sets, customText, enabled);
-      setHosts({ ...hosts, sets, custom: customText, enabled, total });
-      if (next.enabled !== undefined) {
-        notify.ok(enabled ? "Обход применяется только к списку" : "Обход применяется ко всем сайтам");
-      }
+      const total = await api.setZapretHosts(sets, customText);
+      setHosts({ ...hosts, sets, custom: customText, total });
+      if (next.custom !== undefined) notify.ok(`В списке ${total} адресов`);
     } catch (e) {
       notify.error("Не удалось сохранить список", e);
     } finally {
@@ -129,7 +129,7 @@ export function ZapretPage() {
       <ServiceCard
         icon={<GlobeShieldRegular />}
         title="Обход блокировок (Zapret)"
-        subtitle={`Стратегия «${title}»${hosts?.enabled ? ` · только список (${hosts.total})` : " · все сайты"}`}
+        subtitle={`Стратегия «${title}» · свой список: ${hosts?.total ?? 0}`}
         state={status.state}
         version={core?.version}
         error={status.error}
@@ -160,15 +160,9 @@ export function ZapretPage() {
               <span className="hint" style={{ fontWeight: 400 }}>{hosts?.total ?? 0} записей</span>
             </span>
             <span className="hint">
-              {hosts?.enabled ? "Обход применяется только к этим адресам" : "Сейчас обход применяется ко всем сайтам"}
+              Добавляются к собственному списку набора — тот уже покрывает Discord, YouTube и другие сервисы
             </span>
           </div>
-          <Switch
-            checked={hosts?.enabled ?? false}
-            disabled={busy || !hosts}
-            onChange={(_, d) => saveHosts({ enabled: d.checked })}
-            label={hosts?.enabled ? "Только список" : "Все сайты"}
-          />
           <Button
             appearance="subtle"
             icon={hostsOpen ? <ChevronDownRegular /> : <ChevronRightRegular />}
@@ -221,11 +215,9 @@ export function ZapretPage() {
 
       <div className="section-title">
         Стратегии
-        {working !== null && (
-          <span className="hint" style={{ fontWeight: 400 }}>
-            {working} из {probe!.length - 1} рабочих
-          </span>
-        )}
+        <span className="hint" style={{ fontWeight: 400 }}>
+          {working !== null ? `${working} / ${tested!.length - 1} рабочих` : `${strategies.length} шт.`}
+        </span>
         <span className="spacer" />
         <Button
           appearance="subtle"
@@ -237,7 +229,7 @@ export function ZapretPage() {
           {probe ? "Перепроверить" : "Подобрать автоматически"}
         </Button>
       </div>
-      <div className="card" style={{ padding: 6 }}>
+      <div className="card strategy-list" style={{ padding: 6 }}>
         {rows.map((s) => {
           const r = probe?.find((p) => p.id === s.id);
           return (
@@ -290,7 +282,11 @@ export function ZapretPage() {
         )}
       </div>
       <p className="hint" style={{ margin: "2px 4px" }}>
-        Готовые стратегии взяты из набора{" "}
+        Стратегии — это набор{" "}
+        <Link onClick={() => api.openExternal("https://github.com/Flowseal/zapret-discord-youtube")}>
+          Flowseal/zapret-discord-youtube
+        </Link>{" "}
+        на ядре{" "}
         <Link onClick={() => api.openExternal("https://github.com/bol-van/zapret")}>bol-van/zapret</Link>. Провайдеры
         фильтруют по-разному, поэтому нормально, что подходит не первая.
       </p>

@@ -232,20 +232,9 @@ pub async fn zapret_stop(app: AppHandle) -> R<()> {
     zapret::stop(&app).await.map_err(err_str)
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StrategyInfo {
-    pub id: String,
-    pub title: String,
-    pub about: String,
-}
-
 #[tauri::command]
-pub fn zapret_strategies() -> Vec<StrategyInfo> {
-    zapret::STRATEGIES
-        .iter()
-        .map(|s| StrategyInfo { id: s.id.into(), title: s.title.into(), about: s.about.into() })
-        .collect()
+pub fn zapret_strategies(app: AppHandle) -> Vec<zapret::StrategyInfo> {
+    zapret::list_strategies(&app)
 }
 
 #[tauri::command]
@@ -292,7 +281,6 @@ pub async fn restart_all(app: AppHandle, st: State<'_, AppState>) -> R<Vec<Strin
 pub struct HostsState {
     pub sets: Vec<String>,
     pub custom: String,
-    pub enabled: bool,
     pub total: usize,
     pub available: Vec<crate::hostsets::HostSetInfo>,
 }
@@ -304,7 +292,6 @@ pub fn zapret_hosts(st: State<AppState>) -> HostsState {
         total: crate::hostsets::collect(&s.zapret_sets, &s.zapret_custom_hosts).len(),
         sets: s.zapret_sets.clone(),
         custom: s.zapret_custom_hosts.clone(),
-        enabled: s.zapret_hostlist_on,
         available: crate::hostsets::list(),
     }
 }
@@ -315,12 +302,10 @@ pub async fn set_zapret_hosts(
     st: State<'_, AppState>,
     sets: Vec<String>,
     custom: String,
-    enabled: bool,
 ) -> R<usize> {
     st.update_settings(|s| {
         s.zapret_sets = sets;
         s.zapret_custom_hosts = custom;
-        s.zapret_hostlist_on = enabled;
     })
     .map_err(err_str)?;
     let total = zapret::rebuild_hostlist(&app).map_err(err_str)?;
