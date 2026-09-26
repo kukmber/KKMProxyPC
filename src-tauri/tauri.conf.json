@@ -43,7 +43,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE1ODQ3RUVBNUVCNDFFQzYKUldUR0hyUmU2bjZFcGZEeGdaemlNWFJuUXFTSGhka1hjWHB5ZnZwVlNPaUFsNHlEUHJoWDJ1SU0K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUzQzU2QzkxMUM0OEI4RUQKUldUdHVFZ2NrV3pGNHkxSnBHZlVkVEFvMlQvS3o3Y2ZSclozZ3h1NVlYT01VQWN1VmozUGpMV2gK",
       "endpoints": [
         "https://github.com/kukmber/KKMProxyPC/releases/latest/download/latest.json"
       ],

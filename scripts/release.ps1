@@ -49,7 +49,11 @@ if (-not $SkipBuild) {
   $env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16"
   # Tauri ждёт сам ключ в переменной, а не путь к нему.
   $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content $KeyPath -Raw).Trim()
-  $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+  # Пустая переменная в Windows считается отсутствующей, и сборка зависает на
+  # запросе пароля. Поэтому у ключа есть пароль, и он лежит рядом с ним.
+  $passFile = "$KeyPath.pass" -replace '\.key\.pass$', '.pass'
+  if (-not (Test-Path $passFile)) { throw "Нет файла с паролем ключа: $passFile" }
+  $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content $passFile -Raw).Trim()
   npm run tauri build
   if ($LASTEXITCODE -ne 0) { throw "сборка не удалась" }
 }
