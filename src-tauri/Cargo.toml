@@ -1,6 +1,6 @@
 [package]
 name = "kkmproxypc"
-version = "0.2.2"
+version = "0.2.3"
 description = "KKMProxy для Windows: VPN на mihomo, прокси для Telegram, обход DPI"
 authors = ["kukmber"]
 edition = "2021"
@@ -44,6 +44,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_JobObjects",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_SystemInformation",
+    "Win32_System_Registry",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
     "Win32_UI_Shell",

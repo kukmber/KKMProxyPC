@@ -12,10 +12,11 @@ use windows_sys::Win32::System::JobObjects::{
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    GetCurrentProcess, GetExitCodeProcess, OpenProcess, OpenProcessToken, WaitForSingleObject,
+    PROCESS_SYNCHRONIZE,
 };
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
-use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNORMAL};
 
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -67,6 +68,32 @@ pub fn relaunch_elevated(extra_args: &[&str]) -> Result<()> {
         bail!("Запуск от имени администратора отменён");
     }
     Ok(())
+}
+
+/// Выполняет команду с правами администратора и дожидается её завершения.
+/// Windows покажет одно окно подтверждения — саму программу перезапускать не нужно.
+/// Возвращает код возврата команды.
+pub fn run_elevated_wait(exe: &str, params: &str, timeout_ms: u32) -> Result<u32> {
+    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    unsafe {
+        let (verb, file, params) = (wide("runas"), wide(exe), wide(params));
+        let mut info: SHELLEXECUTEINFOW = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = SEE_MASK_NOCLOSEPROCESS;
+        info.lpVerb = verb.as_ptr();
+        info.lpFile = file.as_ptr();
+        info.lpParameters = params.as_ptr();
+        // Окно консоли показывать незачем — работа занимает доли секунды.
+        info.nShow = SW_HIDE as i32;
+        if ShellExecuteExW(&mut info) == 0 || info.hProcess.is_null() {
+            bail!("Подтверждение прав администратора не получено");
+        }
+        WaitForSingleObject(info.hProcess, timeout_ms);
+        let mut code: u32 = 1;
+        GetExitCodeProcess(info.hProcess, &mut code);
+        CloseHandle(info.hProcess);
+        Ok(code)
+    }
 }
 
 pub fn wait_for_pid(pid: u32, timeout_ms: u32) {

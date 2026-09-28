@@ -47,25 +47,28 @@ pub fn status(app: &AppHandle) -> Kind {
     }
 }
 
-/// Включает автозапуск. С правами администратора создаётся задача планировщика,
-/// без них — обычная запись в реестре.
+/// Включает автозапуск. Задача планировщика умеет стартовать с правами
+/// администратора, поэтому создаём именно её. Если прав сейчас нет, Windows
+/// один раз спросит подтверждение — перезапускать всю программу не нужно.
 pub fn enable(app: &AppHandle) -> Result<Kind> {
     disable(app)?;
-    if crate::winsys::is_elevated() {
-        let exe = std::env::current_exe()?;
-        // Кавычки внутри /TR обязательны: в пути есть пробелы.
-        let run = format!("\"{}\" --autostart", exe.display());
-        let out = schtasks(&["/Create", "/TN", TASK, "/TR", &run, "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"])?;
-        if out.status.success() {
-            return Ok(Kind::Task);
-        }
-        // Планировщик может быть недоступен — тогда хотя бы обычный автозапуск.
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        app.autolaunch()
-            .enable()
-            .map_err(|e| anyhow::anyhow!("{err}; и запись в реестре не вышла: {e}"))?;
-        return Ok(Kind::Registry);
+    let exe = std::env::current_exe()?;
+    // Кавычки внутри /TR обязательны: в пути есть пробелы.
+    let run = format!("\"{}\" --autostart", exe.display());
+    let args = ["/Create", "/TN", TASK, "/TR", &run, "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"];
+
+    let created = if crate::winsys::is_elevated() {
+        schtasks(&args).map_or(false, |o| o.status.success())
+    } else {
+        // Через ShellExecute аргументы идут одной строкой, поэтому кавычим сами.
+        let line = format!("/Create /TN {TASK} /TR \"\\\"{}\\\" --autostart\" /SC ONLOGON /RL HIGHEST /F", exe.display());
+        crate::winsys::run_elevated_wait("schtasks.exe", &line, 60_000).map_or(false, |code| code == 0)
+    };
+    if created && task_exists() {
+        return Ok(Kind::Task);
     }
+
+    // Не вышло — пусть будет хотя бы обычный автозапуск, без прав.
     app.autolaunch()
         .enable()
         .map_err(|e| anyhow::anyhow!("не удалось включить автозапуск: {e}"))?;
@@ -74,13 +77,15 @@ pub fn enable(app: &AppHandle) -> Result<Kind> {
 
 pub fn disable(app: &AppHandle) -> Result<()> {
     if task_exists() {
-        let out = schtasks(&["/Delete", "/TN", TASK, "/F"])?;
-        if !out.status.success() {
+        let removed = if crate::winsys::is_elevated() {
+            schtasks(&["/Delete", "/TN", TASK, "/F"]).map_or(false, |o| o.status.success())
+        } else {
             // Задачу с наивысшими правами удаляет только администратор.
-            if !crate::winsys::is_elevated() {
-                bail!("Убрать автозапуск можно только от имени администратора — он создавался с правами");
-            }
-            bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+            crate::winsys::run_elevated_wait("schtasks.exe", &format!("/Delete /TN {TASK} /F"), 60_000)
+                .map_or(false, |code| code == 0)
+        };
+        if !removed && task_exists() {
+            bail!("Не удалось убрать автозапуск: нужно подтверждение прав администратора");
         }
     }
     let _ = app.autolaunch().disable();
