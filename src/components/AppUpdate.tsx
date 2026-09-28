@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, ReactNode, useContext, useEffect, useState } from "react";
 import { Button, ProgressBar, Spinner } from "@fluentui/react-components";
 import { ArrowDownloadRegular, SparkleRegular } from "@fluentui/react-icons";
 import { check, Update } from "@tauri-apps/plugin-updater";
@@ -6,8 +6,25 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { errorText } from "../api";
 import { useNotify } from "../toast";
 
-/** Проверка новой версии самой программы: берётся из релизов на GitHub. */
-export function useAppUpdate() {
+/** Раз в шесть часов: чтобы вышедшая версия не ждала перезапуска программы. */
+const RECHECK_MS = 6 * 60 * 60 * 1000;
+
+interface UpdateState {
+  update: Update | null;
+  checking: boolean;
+  error: string | null;
+  check: (quiet: boolean) => Promise<Update | null>;
+}
+
+const Ctx = createContext<UpdateState>({
+  update: null,
+  checking: false,
+  error: null,
+  check: async () => null,
+});
+
+/** Одна проверка обновления на всю программу: её видят и Пульт, и Настройки. */
+export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [update, setUpdate] = useState<Update | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,8 +34,9 @@ export function useAppUpdate() {
     setError(null);
     try {
       const u = await check();
-      setUpdate(u?.available ? u : null);
-      return u?.available ? u : null;
+      const found = u?.available ? u : null;
+      setUpdate(found);
+      return found;
     } catch (e) {
       // При тихой проверке молчим: сеть может быть недоступна, это не повод шуметь.
       if (!quiet) setError(errorText(e));
@@ -28,16 +46,23 @@ export function useAppUpdate() {
     }
   };
 
-  // Одна проверка при запуске — чтобы новая версия не проходила мимо.
   useEffect(() => {
     run(true);
+    const id = setInterval(() => run(true), RECHECK_MS);
+    return () => clearInterval(id);
   }, []);
 
-  return { update, checking, error, check: run };
+  return <Ctx.Provider value={{ update, checking, error, check: run }}>{children}</Ctx.Provider>;
 }
 
-export function AppUpdateBanner({ update }: { update: Update | null }) {
+export function useAppUpdate() {
+  return useContext(Ctx);
+}
+
+/** Полоса «вышла новая версия» с загрузкой и перезапуском. */
+export function AppUpdateBanner() {
   const notify = useNotify();
+  const { update } = useAppUpdate();
   const [progress, setProgress] = useState<number | null>(null);
   const [done, setDone] = useState(false);
   if (!update) return null;

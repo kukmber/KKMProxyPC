@@ -1107,3 +1107,8 @@ textarea,
   font-size: 12px;
   padding: 4px 10px;
 }
+
+/* Полоса обновления живёт над страницей и занимает место только когда есть. */
+.update-slot:not(:empty) {
+  padding: 12px 12px 0 0;
+}

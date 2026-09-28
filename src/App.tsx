@@ -23,6 +23,7 @@ import { LogsPage } from "./pages/LogsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useCores, useTgStatus, useVpnStatus, useZapretStatus } from "./hooks";
 import { ToasterIdContext } from "./toast";
+import { AppUpdateBanner, AppUpdateProvider } from "./components/AppUpdate";
 import cucumber from "./assets/cucumber.png";
 
 type Page = "control" | "vpn" | "tg" | "dpi" | "logs" | "settings";
@@ -55,6 +56,7 @@ export default function App() {
 
   return (
     <ToasterIdContext.Provider value={toasterId}>
+      <AppUpdateProvider>
       <div className="shell">
         <nav className="rail">
           <img className="rail-mark" src={cucumber} alt="KKMProxy" draggable={false} />
@@ -69,6 +71,9 @@ export default function App() {
           )}
         </nav>
         <main className="content">
+          <div className="update-slot">
+            <AppUpdateBanner />
+          </div>
           {page === "control" && <ControlPage />}
           {page === "vpn" && <VpnPage status={status} />}
           {page === "tg" && <TgPage />}
@@ -78,6 +83,7 @@ export default function App() {
         </main>
       </div>
       <Toaster toasterId={toasterId} position="bottom-end" />
+      </AppUpdateProvider>
     </ToasterIdContext.Provider>
   );
 }

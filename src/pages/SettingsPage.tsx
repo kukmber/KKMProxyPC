@@ -13,7 +13,7 @@ import { ArrowSyncRegular, ArrowDownloadRegular, CheckmarkCircleRegular } from "
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, CoreInfo, PlatformInfo, Startup } from "../api";
 import { useCores } from "../hooks";
-import { AppUpdateBanner, useAppUpdate } from "../components/AppUpdate";
+import { useAppUpdate } from "../components/AppUpdate";
 import { Hotkeys } from "../components/Hotkeys";
 import { useNotify } from "../toast";
 
@@ -102,8 +102,6 @@ export function SettingsPage() {
   return (
     <div className="page">
       <h1 className="page-title">Настройки</h1>
-
-      <AppUpdateBanner update={appUpdate.update} />
 
       <div className="section-title">Запуск</div>
       <div className="card">
