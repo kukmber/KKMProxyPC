@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { Button, Link, Spinner, Switch } from "@fluentui/react-components";
+import {
+  Button,
+  Link,
+  MessageBar,
+  MessageBarActions,
+  MessageBarBody,
+  MessageBarTitle,
+  Spinner,
+  Switch,
+} from "@fluentui/react-components";
 import { ArrowSyncRegular, ArrowDownloadRegular, CheckmarkCircleRegular } from "@fluentui/react-icons";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, CoreInfo, PlatformInfo, Startup } from "../api";
@@ -19,6 +28,7 @@ export function SettingsPage() {
   const [cores, setCores] = useCores();
   const [platform, setPlatform] = useState<PlatformInfo | null>(null);
   const [startup, setStartup] = useState<Startup | null>(null);
+  const [tun, setTun] = useState(false);
   const [checking, setChecking] = useState(false);
   const appUpdate = useAppUpdate();
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -26,6 +36,7 @@ export function SettingsPage() {
   useEffect(() => {
     api.platformInfo().then(setPlatform);
     api.getStartup().then(setStartup);
+    api.getSettings().then((s) => setTun(s.connection === "tun"));
   }, []);
 
   const change = async (patch: Partial<Startup>) => {
@@ -34,6 +45,8 @@ export function SettingsPage() {
     setStartup(next);
     try {
       await api.setStartup(next);
+      // Способ автозапуска выбирает программа, поэтому читаем его заново.
+      setStartup(await api.getStartup());
     } catch (e) {
       setStartup(startup);
       notify.error("Не удалось изменить настройку", e);
@@ -96,7 +109,11 @@ export function SettingsPage() {
       <div className="card">
         {row(
           "Запускать вместе с Windows",
-          "Программа появится в трее сразу после входа в систему",
+          !startup?.withWindows
+            ? "Программа появится в трее сразу после входа в систему"
+            : startup.elevated
+              ? "Задачей планировщика, с правами администратора — TUN и Zapret поднимутся"
+              : "Записью в реестре, без прав администратора",
           startup?.withWindows ?? false,
           (v) => change({ withWindows: v }),
         )}
@@ -120,6 +137,22 @@ export function SettingsPage() {
           (v) => change({ zapret: v }),
         )}
       </div>
+
+      {startup?.withWindows && !startup.elevated && (tun || startup.zapret) && (
+        <MessageBar intent="warning" style={{ marginTop: 8 }}>
+          <MessageBarBody>
+            <MessageBarTitle>Автозапуск не поднимет {tun ? "режим TUN" : "обход блокировок"}</MessageBarTitle>
+            Записи автозапуска Windows выполняет без прав администратора, а {tun ? "TUN" : "Zapret"} без них не
+            работает. Перезапустите программу от администратора и включите автозапуск заново — тогда он будет
+            создан задачей планировщика и получит права.
+          </MessageBarBody>
+          <MessageBarActions>
+            <Button onClick={() => api.restartAsAdmin(false).catch((e) => notify.error("Перезапуск отменён", e))}>
+              Перезапустить от администратора
+            </Button>
+          </MessageBarActions>
+        </MessageBar>
+      )}
 
       <div className="section-title">Горячие клавиши</div>
       <Hotkeys />

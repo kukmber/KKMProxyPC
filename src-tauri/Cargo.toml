@@ -1,6 +1,6 @@
 [package]
 name = "kkmproxypc"
-version = "0.2.0"
+version = "0.2.1"
 description = "KKMProxy для Windows: VPN на mihomo, прокси для Telegram, обход DPI"
 authors = ["kukmber"]
 edition = "2021"

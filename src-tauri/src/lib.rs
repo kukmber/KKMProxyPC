@@ -1,3 +1,4 @@
+mod autostart;
 mod child;
 mod commands;
 mod config;
@@ -8,6 +9,7 @@ mod logs;
 mod paths;
 mod profiles;
 mod settings;
+mod singleinst;
 mod state;
 mod subscription;
 mod tgproxy;
@@ -30,6 +32,11 @@ pub fn run() {
         .and_then(|p| p.parse().ok())
     {
         winsys::wait_for_pid(pid, 10_000);
+    }
+    // Уже запущенная копия сама покажет окно — эту закрываем, не создавая второй
+    // значок в трее и вторые ядра.
+    if singleinst::hand_over_to_running() {
+        return;
     }
     let autoconnect = args.iter().any(|a| a == "--connect");
     // --autostart добавляет Windows при запуске вместе с системой.
@@ -54,6 +61,7 @@ pub fn run() {
             vpn::restore_sysproxy(app.handle());
             tray::build(app.handle())?;
             cores::schedule_checks(app.handle());
+            singleinst::watch(app.handle());
             if let Err(e) = hotkeys::apply(app.handle()) {
                 eprintln!("горячие клавиши не применились: {e:#}");
             }

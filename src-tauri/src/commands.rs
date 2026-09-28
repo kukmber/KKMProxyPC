@@ -343,6 +343,10 @@ pub async fn zapret_autotune(app: AppHandle, domains: Vec<String>) -> R<Vec<zapr
 #[serde(rename_all = "camelCase")]
 pub struct Startup {
     pub with_windows: bool,
+    /// Как именно сделан автозапуск: задачей планировщика (с правами) или
+    /// записью в реестре (без прав). Задаётся программой, из окна не меняется.
+    #[serde(default)]
+    pub elevated: bool,
     pub minimized: bool,
     pub vpn: bool,
     pub tg: bool,
@@ -352,10 +356,11 @@ pub struct Startup {
 
 #[tauri::command]
 pub fn get_startup(app: AppHandle, st: State<AppState>) -> Startup {
-    use tauri_plugin_autostart::ManagerExt;
+    let kind = crate::autostart::status(&app);
     let s = st.settings.lock().unwrap();
     Startup {
-        with_windows: app.autolaunch().is_enabled().unwrap_or(false),
+        with_windows: kind != crate::autostart::Kind::Off,
+        elevated: kind == crate::autostart::Kind::Task,
         minimized: s.start_minimized,
         vpn: s.autostart_vpn,
         tg: s.autostart_tg,
@@ -366,12 +371,13 @@ pub fn get_startup(app: AppHandle, st: State<AppState>) -> Startup {
 
 #[tauri::command]
 pub fn set_startup(app: AppHandle, st: State<AppState>, value: Startup) -> R<()> {
-    use tauri_plugin_autostart::ManagerExt;
-    let manager = app.autolaunch();
-    let was = manager.is_enabled().unwrap_or(false);
+    let was = crate::autostart::status(&app) != crate::autostart::Kind::Off;
     if value.with_windows != was {
-        let r = if value.with_windows { manager.enable() } else { manager.disable() };
-        r.map_err(|e| format!("не удалось изменить автозапуск: {e}"))?;
+        if value.with_windows {
+            crate::autostart::enable(&app).map_err(err_str)?;
+        } else {
+            crate::autostart::disable(&app).map_err(err_str)?;
+        }
     }
     st.update_settings(|s| {
         s.start_minimized = value.minimized;

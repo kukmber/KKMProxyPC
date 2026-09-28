@@ -65,6 +65,8 @@ export interface HostsState {
 
 export interface Startup {
   withWindows: boolean;
+  /** Автозапуск сделан задачей планировщика, то есть с правами администратора. */
+  elevated: boolean;
   minimized: boolean;
   vpn: boolean;
   tg: boolean;
