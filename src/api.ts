@@ -80,6 +80,26 @@ export interface StrategyInfo {
   about: string;
 }
 
+export interface TgAdvanced {
+  /** Свои домены Cloudflare с записями kws1–kws5. */
+  cfProxy: boolean;
+  cfDomains: string;
+  /** Cloudflare Worker — туннель до DC без своей зоны в Cloudflare. */
+  cfWorker: boolean;
+  cfWorkerDomains: string;
+  cfBalance: boolean;
+  /** Публичный список доменов из репозитория Flowseal. */
+  defaultDomains: boolean;
+  noH2: boolean;
+  cfDisableTls: boolean;
+  verbose: boolean;
+  bufKb: number;
+  poolSize: number;
+  /** Свои адреса DC: по строке вида `2:149.154.167.220`. */
+  dcIps: string;
+  logMb: number;
+}
+
 export interface Settings {
   activeProfile?: string;
   mode: Mode;
@@ -88,6 +108,7 @@ export interface Settings {
   tgHost: string;
   tgPort: number;
   tgSecret?: string;
+  tgAdvanced: TgAdvanced;
   zapretStrategy: string;
   zapretCustom: string;
   zapretHostlistOn: boolean;
@@ -173,6 +194,10 @@ export const api = {
   setStartup: (value: Startup) => invoke<void>("set_startup", { value }),
   setZapretCustom: (args: string) => invoke<void>("set_zapret_custom", { args }),
   zapretAutotune: (domains: string[]) => invoke<ProbeResult[]>("zapret_autotune", { domains }),
+  youtubeCheck: () => invoke<YoutubeReport>("youtube_check"),
+  youtubeBlock: (hosts: string[]) => invoke<number>("youtube_block", { hosts }),
+  youtubeUnblock: () => invoke<boolean>("youtube_unblock"),
+  youtubeBlocked: () => invoke<number>("youtube_blocked"),
   restartAll: () => invoke<string[]>("restart_all"),
   dpiConflict: () => invoke<DpiConflict | null>("dpi_conflict"),
   appRules: () => invoke<AppRule[]>("app_rules"),
@@ -180,6 +205,8 @@ export const api = {
   runningProcesses: () => invoke<string[]>("running_processes"),
   hotkeys: () => invoke<HotkeyInfo[]>("hotkeys"),
   setHotkey: (action: string, accelerator: string) => invoke<void>("set_hotkey", { action, accelerator }),
+  setTgAdvanced: (advanced: TgAdvanced) => invoke<void>("set_tg_advanced", { advanced }),
+  tgTest: (kind: "cfproxy" | "worker", domains: string) => invoke<string>("tg_test", { kind, domains }),
   openExternal: (url: string) => openUrl(url),
   coreInfo: () => invoke<CoreInfo[]>("core_info"),
   checkCoreUpdates: () => invoke<CoreInfo[]>("check_core_updates"),
@@ -192,6 +219,23 @@ export interface HotkeyInfo {
   action: string;
   about: string;
   accelerator: string;
+}
+
+/** Кэш YouTube: имя, адрес и страна (пусто — не удалось узнать). */
+export interface YoutubeCache {
+  host: string;
+  ip: string;
+  country: string;
+}
+
+export interface YoutubeReport {
+  hosts: YoutubeCache[];
+  /** Сколько кэшей оказались российскими. */
+  ru: number;
+  /** Сколько записей уже лежит в hosts. */
+  blocked: number;
+  geoOk: boolean;
+  vpnRunning: boolean;
 }
 
 export interface AppRule {

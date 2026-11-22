@@ -7,6 +7,7 @@ use crate::state::AppState;
 use crate::{tgproxy, vpn, zapret};
 use anyhow::{bail, Result};
 use serde::Serialize;
+use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -39,19 +40,31 @@ pub fn list(app: &AppHandle) -> Vec<HotkeyInfo> {
         .collect()
 }
 
-/// Перерегистрирует все сочетания из настроек. Вызывается при запуске и после
-/// каждого изменения: снимаем всё и ставим заново, чтобы не следить за тем,
-/// что именно поменялось.
+/// Перерегистрирует все сочетания из настроек. Вызывается при запуске.
 pub fn apply(app: &AppHandle) -> Result<()> {
+    let keys = app.state::<AppState>().settings.lock().unwrap().hotkeys.clone();
+    // На запуске не мешаем работать: если сочетание занято, пишем в журнал,
+    // остальные всё равно встают.
+    for error in register_all(app, &keys) {
+        log(app, "warning", format!("Горячая клавиша не работает: {error}"));
+    }
+    Ok(())
+}
+
+/// Снимает все сочетания и ставит заново по карте «действие — сочетание».
+/// Возвращает список того, что Windows не отдала: молча пропускать нельзя,
+/// иначе интерфейс показывает «назначено», а клавиша не работает.
+fn register_all(app: &AppHandle, keys: &HashMap<String, String>) -> Vec<String> {
     let manager = app.global_shortcut();
     let _ = manager.unregister_all();
-    let keys = app.state::<AppState>().settings.lock().unwrap().hotkeys.clone();
+    let mut errors = Vec::new();
     for (action, accel) in keys {
-        if accel.trim().is_empty() {
+        let accel = accel.trim();
+        if accel.is_empty() {
             continue;
         }
         let Ok(shortcut) = accel.parse::<Shortcut>() else {
-            log(app, "warning", format!("Не понял сочетание «{accel}» — пропускаю"));
+            errors.push(format!("«{accel}» — не понял сочетание"));
             continue;
         };
         let handle = app.clone();
@@ -62,44 +75,56 @@ pub fn apply(app: &AppHandle) -> Result<()> {
                 run(&handle, &act);
             }
         }) {
-            log(app, "warning", format!("Сочетание «{accel}» занято другой программой: {e}"));
+            errors.push(format!("«{accel}» — {e}"));
         }
     }
-    Ok(())
+    errors
 }
 
 /// Сохраняет сочетание для действия. Пустая строка убирает его.
+///
+/// Сначала проверяем, что Windows действительно отдала клавишу, и только
+/// потом пишем в настройки: иначе настройка «есть», а работать нечему.
 pub fn set(app: &AppHandle, action: &str, accelerator: &str) -> Result<()> {
     if !ACTIONS.iter().any(|(a, _)| *a == action) {
         bail!("неизвестное действие {action}");
     }
     let accel = accelerator.trim().to_string();
+    if !accel.is_empty() && accel.parse::<Shortcut>().is_err() {
+        bail!("Такое сочетание не подходит");
+    }
+    let st = app.state::<AppState>();
+    let previous = st.settings.lock().unwrap().hotkeys.clone();
     if !accel.is_empty() {
-        if accel.parse::<Shortcut>().is_err() {
-            bail!("Такое сочетание не подходит");
-        }
         // Одно сочетание на два действия — почти наверняка ошибка.
-        let busy = app
-            .state::<AppState>()
-            .settings
-            .lock()
-            .unwrap()
-            .hotkeys
+        let busy = previous
             .iter()
             .any(|(a, v)| a != action && v.eq_ignore_ascii_case(&accel));
         if busy {
             bail!("Это сочетание уже занято другим действием");
         }
     }
-    let st = app.state::<AppState>();
-    st.update_settings(|s| {
-        if accel.is_empty() {
-            s.hotkeys.remove(action);
-        } else {
-            s.hotkeys.insert(action.to_string(), accel.clone());
-        }
-    })?;
-    apply(app)
+    let mut next = previous.clone();
+    if accel.is_empty() {
+        next.remove(action);
+    } else {
+        next.insert(action.to_string(), accel.clone());
+    }
+
+    let errors = register_all(app, &next);
+    if !errors.is_empty() {
+        // Возвращаем прежние сочетания, чтобы старые клавиши не пропали.
+        let _ = register_all(app, &previous);
+        bail!(
+            "Windows не отдала сочетание: {}. Возможно, его занимает другая программа.",
+            errors.join("; ")
+        );
+    }
+    if let Err(e) = st.update_settings(|s| s.hotkeys = next) {
+        let _ = register_all(app, &previous);
+        return Err(e);
+    }
+    Ok(())
 }
 
 fn log(app: &AppHandle, level: &str, msg: impl Into<String>) {

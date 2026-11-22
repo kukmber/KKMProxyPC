@@ -4,10 +4,11 @@
 //! `tg://proxy?…`, которую Telegram открывает одним нажатием.
 
 use crate::child::{self, Running, Spawn};
+use crate::settings::TgAdvanced;
 use crate::state::AppState;
 use crate::util::{self, now_ms};
 use crate::{cores, winsys};
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -98,6 +99,149 @@ pub fn valid_secret(s: &str) -> bool {
     s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Домены из текстового поля: по одному в строке или через запятую.
+fn split_domains(raw: &str) -> Vec<String> {
+    raw.split([',', '\n', '\r', ' ', '\t', ';'])
+        .map(|d| d.trim().trim_start_matches("*.").to_string())
+        .filter(|d| !d.is_empty())
+        .collect()
+}
+
+/// Свои адреса DC из строк вида `2:149.154.167.220`.
+fn dc_targets(raw: &str) -> Vec<String> {
+    raw.split(['\n', '\r', ',', ' ', '\t'])
+        .map(|l| l.trim().to_string())
+        .filter(|l| match l.split_once(':') {
+            // Адрес может быть и IPv6 — тогда двоеточий в нём много.
+            Some((dc, ip)) => dc.parse::<i32>().is_ok() && ip.parse::<std::net::IpAddr>().is_ok(),
+            None => false,
+        })
+        .collect()
+}
+
+/// Аргументы ядра из «продвинутого» блока. Всё, что не отмечено, не передаём —
+/// тогда ядро ведёт себя так, как задумано его авторами.
+fn advanced_args(a: &TgAdvanced) -> Vec<OsString> {
+    let mut out: Vec<OsString> = Vec::new();
+    let cf = split_domains(&a.cf_domains);
+
+    if a.cf_proxy && !cf.is_empty() {
+        out.push("--cf-domain".into());
+        out.push(cf.join(",").into());
+    }
+    // Публичный список Flowseal: без него свои домены — единственный путь.
+    if a.default_domains {
+        out.push("--default-domains".into());
+    }
+    let worker = split_domains(&a.cf_worker_domains);
+    if a.cf_worker && !worker.is_empty() {
+        out.push("--cf-worker-domain".into());
+        out.push(worker.join(",").into());
+    }
+    // Балансировка имеет смысл только когда доменов больше одного.
+    if a.cf_balance && cf.len() > 1 {
+        out.push("--cf-balance".into());
+    }
+    if a.no_h2 {
+        out.push("--no-h2".into());
+    }
+    // Эти две настройки относятся только к Cloudflare — без доменов бесполезны.
+    if a.cf_disable_tls && (a.cf_proxy || a.cf_worker) {
+        out.push("--cf-disable-tls".into());
+    }
+    if a.verbose {
+        out.push("--verbose".into());
+    }
+    if a.buf_kb > 0 {
+        out.push("--buf-kb".into());
+        out.push(a.buf_kb.to_string().into());
+    }
+    if a.pool_size > 0 {
+        out.push("--pool-size".into());
+        out.push(a.pool_size.to_string().into());
+    }
+    for dc in dc_targets(&a.dc_ips) {
+        out.push("--dc-ip".into());
+        out.push(dc.into());
+    }
+    out
+}
+
+/// Убирает цветовые коды из вывода ядра — в окне проверки они лишние.
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if chars.next() == Some('[') {
+                for code in chars.by_ref() {
+                    if code.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Проверяет домены Cloudflare (`--check`) и возвращает то, что ответило ядро.
+/// kind: cfproxy — свои домены Cloudflare, worker — домен Cloudflare Worker.
+/// `domains` — то, что сейчас в поле ввода; если пусто, берём сохранённое.
+pub async fn check(app: &AppHandle, kind: &str, domains: &str) -> Result<String> {
+    let exe = cores::ensure(app, "tgws").await?;
+    let advanced = app.state::<AppState>().settings.lock().unwrap().tg_advanced.clone();
+    let typed = domains.trim().to_string();
+    let mut args: Vec<OsString> = vec!["--check".into()];
+    match kind {
+        "cfproxy" => {
+            let list = split_domains(if typed.is_empty() { &advanced.cf_domains } else { &typed });
+            if list.is_empty() {
+                bail!("Сначала впишите домены Cloudflare");
+            }
+            args.push("--cf-domain".into());
+            args.push(list.join(",").into());
+        }
+        "worker" => {
+            let list = split_domains(if typed.is_empty() { &advanced.cf_worker_domains } else { &typed });
+            if list.is_empty() {
+                bail!("Сначала впишите домен Cloudflare Worker");
+            }
+            args.push("--cf-worker-domain".into());
+            args.push(list.join(",").into());
+        }
+        _ => bail!("неизвестная проверка"),
+    }
+    if advanced.cf_disable_tls {
+        args.push("--cf-disable-tls".into());
+    }
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(60),
+        tokio::process::Command::new(&exe)
+            .args(&args)
+            .creation_flags(winsys::CREATE_NO_WINDOW)
+            .output(),
+    )
+    .await
+    .map_err(|_| anyhow!("ядро не ответило за 60 секунд"))??;
+
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    let text = strip_ansi(&text)
+        .lines()
+        .map(|l| l.trim_end().to_string())
+        .filter(|l| !l.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() {
+        bail!("ядро ничего не ответило — проверьте домены вручную");
+    }
+    Ok(text)
+}
+
 pub async fn start(app: &AppHandle) -> Result<()> {
     let st = app.state::<AppState>();
     let _op = st.tg.op.lock().await;
@@ -122,9 +266,9 @@ pub async fn start(app: &AppHandle) -> Result<()> {
 async fn start_inner(app: &AppHandle) -> Result<()> {
     let st = app.state::<AppState>();
     let exe = cores::ensure(app, "tgws").await?;
-    let (host, want_port, secret) = {
+    let (host, want_port, secret, advanced) = {
         let s = st.settings.lock().unwrap();
-        (s.tg_host.clone(), s.tg_port, s.tg_secret.clone())
+        (s.tg_host.clone(), s.tg_port, s.tg_secret.clone(), s.tg_advanced.clone())
     };
     let port = if util::port_is_free(want_port) { want_port } else { util::free_port()? };
     // Секрет держим постоянным: иначе после каждого перезапуска ссылку
@@ -138,21 +282,24 @@ async fn start_inner(app: &AppHandle) -> Result<()> {
         }
     };
 
-    let args: Vec<OsString> = vec![
-        "--port".into(),
-        port.to_string().into(),
-        // По умолчанию слушаем только себя; 0.0.0.0 открывает прокси для устройств в сети.
-        "--host".into(),
-        host.clone().into(),
-        // Без этого ядро подставляет в ссылку самостоятельно определённый адрес — и когда включён
-        // наш же VPN, им оказывается адрес из диапазона fake-ip (198.18.x.x).
-        "--link-ip".into(),
-        link_host(&host).into(),
-        "--secret".into(),
-        secret.clone().into(),
-        // Список доменов Cloudflare: запасной путь, когда адреса Telegram режут.
-        "--default-domains".into(),
-    ];
+    let args: Vec<OsString> = {
+        let mut args: Vec<OsString> = vec![
+            "--port".into(),
+            port.to_string().into(),
+            // По умолчанию слушаем только себя; 0.0.0.0 открывает прокси для устройств в сети.
+            "--host".into(),
+            host.clone().into(),
+            // Без этого ядро подставляет в ссылку самостоятельно определённый адрес — и когда включён
+            // наш же VPN, им оказывается адрес из диапазона fake-ip (198.18.x.x).
+            "--link-ip".into(),
+            link_host(&host).into(),
+            "--secret".into(),
+            secret.clone().into(),
+        ];
+        // Всё, что отмечено в «продвинутом» блоке: домены Cloudflare, Worker, DC→IP.
+        args.extend(advanced_args(&advanced));
+        args
+    };
 
     let exited = Arc::new(AtomicBool::new(false));
     let running = child::spawn(
@@ -285,5 +432,41 @@ mod tests {
             link_for("127.0.0.1", 1443, "00112233445566778899aabbccddeeff"),
             "tg://proxy?server=127.0.0.1&port=1443&secret=dd00112233445566778899aabbccddeeff"
         );
+    }
+
+    fn strings(args: Vec<OsString>) -> Vec<String> {
+        args.into_iter().map(|a| a.into_string().unwrap()).collect()
+    }
+
+    /// По умолчанию ядру достаётся только публичный список доменов Flowseal.
+    #[test]
+    fn default_advanced_args_are_minimal() {
+        assert_eq!(strings(advanced_args(&TgAdvanced::default())), vec!["--default-domains"]);
+    }
+
+    #[test]
+    fn builds_advanced_args() {
+        let a = TgAdvanced {
+            cf_proxy: true,
+            cf_domains: "a.example.com, b.example.com\n*.c.example.com".into(),
+            cf_balance: true,
+            default_domains: false,
+            no_h2: true,
+            verbose: true,
+            pool_size: 8,
+            dc_ips: "2:149.154.167.220\nмусор\n4:2001:db8::1".into(),
+            ..Default::default()
+        };
+        let args = strings(advanced_args(&a));
+        assert_eq!(args[0], "--cf-domain");
+        assert_eq!(args[1], "a.example.com,b.example.com,c.example.com");
+        assert!(args.contains(&"--cf-balance".to_string()));
+        assert!(args.contains(&"--no-h2".to_string()));
+        assert!(args.contains(&"--verbose".to_string()));
+        assert!(args.contains(&"--pool-size".to_string()));
+        assert!(!args.contains(&"--default-domains".to_string()));
+        // Мусорная строка отброшена, IPv6 разобран целиком.
+        assert_eq!(args.iter().filter(|a| *a == "--dc-ip").count(), 2);
+        assert!(args.contains(&"4:2001:db8::1".to_string()));
     }
 }

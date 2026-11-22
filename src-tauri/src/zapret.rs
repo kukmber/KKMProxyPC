@@ -175,7 +175,45 @@ pub fn args_of(app: &AppHandle, id: &str) -> Result<Vec<String>> {
     let dir = core_dir(app).context("ядро zapret не установлено")?;
     let path = dir.join(format!("{id}.bat"));
     let text = std::fs::read_to_string(&path).with_context(|| format!("нет файла стратегии {id}.bat"))?;
-    parse_bat(&text, &dir).with_context(|| format!("не удалось разобрать {id}.bat"))
+    let mut args = parse_bat(&text, &dir).with_context(|| format!("не удалось разобрать {id}.bat"))?;
+    ensure_youtube_quic(&mut args);
+    Ok(args)
+}
+
+/// YouTube по умолчанию гоняет видео через QUIC (UDP 443), а в наборах
+/// Flowseal правило для QUIC перечисляет домены списком, где `googlevideo.com`
+/// нет. Такой поток идёт мимо обхода, и видео не грузится вовсе. Добавляем
+/// домен в правила UDP 443, у которых уже есть список доменов, — это то же
+/// самое, что советует автор набора.
+fn ensure_youtube_quic(args: &mut Vec<String>) {
+    const DOMAIN: &str = "--hostlist-domains=googlevideo.com";
+    if args.iter().any(|a| a == DOMAIN) {
+        return;
+    }
+    let mut out: Vec<String> = Vec::with_capacity(args.len() + 2);
+    let mut added = false;
+    for (i, arg) in args.iter().enumerate() {
+        out.push(arg.clone());
+        let Some(ports) = arg.strip_prefix("--filter-udp=") else { continue };
+        if !ports.split(',').any(|p| p.trim() == "443") {
+            continue;
+        }
+        let end = args[i + 1..]
+            .iter()
+            .position(|a| a == "--new")
+            .map(|p| i + 1 + p)
+            .unwrap_or(args.len());
+        let rule = &args[i + 1..end];
+        let has_list = rule.iter().any(|a| a.starts_with("--hostlist="));
+        let has_domains = rule.iter().any(|a| a.starts_with("--hostlist-domains="));
+        if has_list && !has_domains {
+            out.push(DOMAIN.to_string());
+            added = true;
+        }
+    }
+    if added {
+        *args = out;
+    }
 }
 
 /// Название выбранной стратегии для подписи в интерфейсе.
@@ -474,6 +512,25 @@ mod tests {
         );
         // Пустые кавычки — это пустой аргумент, а не отсутствие аргумента.
         assert_eq!(split_args("--a=\"\" --b"), vec!["--a=", "--b"]);
+    }
+
+    #[test]
+    fn adds_googlevideo_to_quic_rule() {
+        let mut args = parse_bat(BAT, Path::new(r"C:\cores\zapret")).unwrap();
+        ensure_youtube_quic(&mut args);
+        let quic = args.iter().position(|a| a == "--filter-udp=443").unwrap();
+        assert_eq!(args[quic + 1], "--hostlist-domains=googlevideo.com");
+        // Правило TCP не трогаем: googlevideo там уже есть в списке.
+        assert_eq!(
+            args.iter().filter(|a| a.as_str() == "--hostlist-domains=googlevideo.com").count(),
+            1
+        );
+        // Повторный вызов ничего не дублирует.
+        ensure_youtube_quic(&mut args);
+        assert_eq!(
+            args.iter().filter(|a| a.as_str() == "--hostlist-domains=googlevideo.com").count(),
+            1
+        );
     }
 }
 

@@ -17,9 +17,16 @@ export function Hotkeys() {
   const notify = useNotify();
   const [items, setItems] = useState<HotkeyInfo[]>([]);
   const [capturing, setCapturing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.hotkeys().then(setItems);
+    api
+      .hotkeys()
+      .then((list) => {
+        setItems(list);
+        setError(null);
+      })
+      .catch((e) => setError(String(e)));
   }, []);
 
   const save = async (action: string, accelerator: string) => {
@@ -28,6 +35,8 @@ export function Hotkeys() {
       setItems(await api.hotkeys());
       if (accelerator) notify.ok(`Назначено: ${pretty(accelerator)}`);
     } catch (e) {
+      // Windows не отдаёт занятое сочетание — говорим об этом прямо, а не
+      // показываем «назначено», которое потом не сработает.
       notify.error("Не удалось назначить", e);
     } finally {
       setCapturing(null);
@@ -40,6 +49,7 @@ export function Hotkeys() {
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (e.repeat) return;
       if (e.key === "Escape") return setCapturing(null);
       const accel = toAccelerator(e);
       if (accel) save(capturing, accel);
@@ -50,6 +60,14 @@ export function Hotkeys() {
 
   return (
     <div className="card">
+      {error && (
+        <div className="row">
+          <div className="text">
+            <span className="title">Сочетания недоступны</span>
+            <span className="desc">Не удалось прочитать настройки: {error}</span>
+          </div>
+        </div>
+      )}
       {items.map((h) => (
         <div className="row" key={h.action}>
           <div className="text">
@@ -74,6 +92,16 @@ export function Hotkeys() {
           </Tooltip>
         </div>
       ))}
+      {!error && (
+        <div className="row">
+          <div className="text">
+            <span className="hint">
+              Нужен модификатор (Ctrl, Alt, Shift или Win). Если сочетание занято другой программой, Windows его не
+              отдаст — программа об этом скажет.
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

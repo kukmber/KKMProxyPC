@@ -204,6 +204,29 @@ pub async fn set_tg_params(
     Ok(())
 }
 
+/// Сохраняет «продвинутые» настройки прокси и, если он включён, перезапускает
+/// его — иначе новые домены Cloudflare не подхватятся до ручного перезапуска.
+#[tauri::command]
+pub async fn set_tg_advanced(
+    app: AppHandle,
+    st: State<'_, AppState>,
+    advanced: crate::settings::TgAdvanced,
+) -> R<()> {
+    st.update_settings(|s| s.tg_advanced = advanced.clone()).map_err(err_str)?;
+    crate::logs::set_max_mb(advanced.log_mb);
+    if st.tg.status().state == "running" {
+        tgproxy::stop(&app).await.map_err(err_str)?;
+        tgproxy::start(&app).await.map_err(err_str)?;
+    }
+    Ok(())
+}
+
+/// Проверяет домены Cloudflare тем же способом, что и само ядро (`--check`).
+#[tauri::command]
+pub async fn tg_test(app: AppHandle, kind: String, domains: String) -> R<String> {
+    tgproxy::check(&app, &kind, &domains).await.map_err(err_str)
+}
+
 /// Выдаёт новый случайный ключ: пригодится, если прежний куда-то утёк.
 #[tauri::command]
 pub async fn regenerate_tg_secret(app: AppHandle, st: State<'_, AppState>) -> R<String> {
@@ -335,6 +358,32 @@ pub async fn set_zapret_custom(app: AppHandle, st: State<'_, AppState>, args: St
 #[tauri::command]
 pub async fn zapret_autotune(app: AppHandle, domains: Vec<String>) -> R<Vec<zapret::ProbeResult>> {
     zapret::autotune(&app, domains).await.map_err(err_str)
+}
+
+// ---------- кэши YouTube ----------
+
+/// Находит кэши YouTube и определяет, какие из них российские.
+#[tauri::command]
+pub async fn youtube_check(app: AppHandle) -> R<crate::youtube::YoutubeReport> {
+    crate::youtube::check(&app).await.map_err(err_str)
+}
+
+/// Закрывает выбранные кэши в файле hosts. Возвращает число записей.
+#[tauri::command]
+pub fn youtube_block(app: AppHandle, hosts: Vec<String>) -> R<usize> {
+    crate::youtube::block(&app, &hosts).map_err(err_str)
+}
+
+/// Убирает из hosts всё, что добавила программа.
+#[tauri::command]
+pub fn youtube_unblock(app: AppHandle) -> R<bool> {
+    crate::youtube::unblock(&app).map_err(err_str)
+}
+
+/// Сколько кэшей YouTube уже закрыто в hosts.
+#[tauri::command]
+pub fn youtube_blocked() -> usize {
+    crate::youtube::blocked_count()
 }
 
 // ---------- запуск вместе с Windows ----------

@@ -18,6 +18,7 @@ mod util;
 mod vpn;
 mod zapret;
 mod winsys;
+mod youtube;
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
@@ -58,6 +59,11 @@ pub fn run() {
             let root = app.path().app_local_data_dir()?;
             let resources = app.path().resource_dir().ok();
             app.manage(state::AppState::new(paths::Paths::new(root, resources)?));
+            {
+                let st = app.state::<state::AppState>();
+                let mb = st.settings.lock().unwrap().tg_advanced.log_mb;
+                logs::set_max_mb(mb);
+            }
             vpn::restore_sysproxy(app.handle());
             tray::build(app.handle())?;
             cores::schedule_checks(app.handle());
@@ -147,6 +153,8 @@ pub fn run() {
             commands::tg_stop,
             commands::tg_connections,
             commands::set_tg_params,
+            commands::set_tg_advanced,
+            commands::tg_test,
             commands::regenerate_tg_secret,
             commands::zapret_status,
             commands::zapret_start,
@@ -157,6 +165,10 @@ pub fn run() {
             commands::set_zapret_hosts,
             commands::set_zapret_custom,
             commands::zapret_autotune,
+            commands::youtube_check,
+            commands::youtube_block,
+            commands::youtube_unblock,
+            commands::youtube_blocked,
             commands::dpi_conflict,
             commands::app_rules,
             commands::set_app_rules,

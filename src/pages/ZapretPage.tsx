@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Checkbox, Link, Textarea, Tooltip } from "@fluentui/react-components";
+import { Button, Checkbox, Link, Spinner, Textarea, Tooltip } from "@fluentui/react-components";
 import {
   ChevronDownRegular,
   ChevronRightRegular,
@@ -7,9 +7,10 @@ import {
   DismissCircleRegular,
   GlobeShieldRegular,
   ListRegular,
+  VideoRegular,
   WandRegular,
 } from "@fluentui/react-icons";
-import { api, HostsState, ProbeResult, StrategyInfo } from "../api";
+import { api, HostsState, ProbeResult, StrategyInfo, YoutubeReport } from "../api";
 import { useCores, useZapretStatus } from "../hooks";
 import { useNotify } from "../toast";
 import { ServiceCard, UpdateBanner } from "../components/ServiceCard";
@@ -161,6 +162,8 @@ export function ZapretPage() {
           ) : undefined
         }
       />
+
+      <YoutubeCard />
 
       <div className="card" style={{ padding: "14px 18px", marginTop: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -318,6 +321,172 @@ export function ZapretPage() {
           pick(id);
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * YouTube: российские кэши Google с ноября 2026 отдают видео очень медленно
+ * или не отдают вовсе. Обход DPI тут не виноват. Полностью лечится VPN,
+ * частично — блокировкой неработающих кэшей в hosts.
+ */
+function YoutubeCard() {
+  const notify = useNotify();
+  const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState<YoutubeReport | null>(null);
+  const [blocked, setBlocked] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    api.youtubeBlocked().then(setBlocked).catch(() => {});
+  }, []);
+
+  const ru = report?.hosts.filter((h) => h.country === "RU") ?? [];
+
+  const check = async () => {
+    setBusy(true);
+    try {
+      const r = await api.youtubeCheck();
+      setReport(r);
+      setBlocked(r.blocked);
+      setOpen(true);
+    } catch (e) {
+      notify.error("Не удалось проверить кэши YouTube", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const block = async () => {
+    setBusy(true);
+    try {
+      const n = await api.youtubeBlock(ru.map((h) => h.host));
+      setBlocked(n);
+      notify.ok(
+        `Всего закрыто кэшей: ${n}`,
+        "Перезапустите браузер. Если видео всё равно не грузится — включите VPN: часть провайдеров блокирует сами адреса кэшей",
+      );
+    } catch (e) {
+      notify.error("Не удалось изменить файл hosts", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unblock = async () => {
+    setBusy(true);
+    try {
+      await api.youtubeUnblock();
+      setBlocked(0);
+      notify.ok("Файл hosts возвращён в прежний вид");
+    } catch (e) {
+      notify.error("Не удалось вернуть файл hosts", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: "14px 18px", marginTop: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <VideoRegular style={{ fontSize: 20, color: "var(--text-secondary)" }} />
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontSize: 15, fontWeight: 600 }}>
+            YouTube{" "}
+            {blocked > 0 && (
+              <span className="hint" style={{ fontWeight: 400 }}>
+                в hosts закрыто: {blocked}
+              </span>
+            )}
+          </span>
+          <span className="hint">
+            Видео не грузится, хотя сайт открывается? Это российские кэши Google: они отдают видео очень медленно
+            или не отдают вовсе. Полностью помогает только VPN, частично — блокировка неработающих кэшей.
+          </span>
+        </div>
+        <Button onClick={check} disabled={busy}>
+          Проверить кэши
+        </Button>
+        {busy && <Spinner size="tiny" />}
+      </div>
+
+      {(report || blocked > 0) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: 12 }}>
+          {ru.length > 0 && (
+            <Button appearance="primary" onClick={block} disabled={busy}>
+              Закрыть российские ({ru.length})
+            </Button>
+          )}
+          {blocked > 0 && (
+            <Button onClick={unblock} disabled={busy}>
+              Вернуть файл hosts
+            </Button>
+          )}
+          {report && (
+            <Button
+              appearance="subtle"
+              onClick={() => setOpen((v) => !v)}
+              icon={open ? <ChevronDownRegular /> : <ChevronRightRegular />}
+              iconPosition="after"
+            >
+              {open ? "Свернуть список" : "Показать список"}
+            </Button>
+          )}
+          {report?.vpnRunning && (
+            <span className="hint" style={{ color: "var(--bad)" }}>
+              VPN включён: проверка видит кэши страны VPN. Выключите VPN и повторите.
+            </span>
+          )}
+          {report && !report.vpnRunning && report.geoOk && ru.length === 0 && (
+            <span className="hint">Российских кэшей не нашлось — провайдер уже отдаёт зарубежные.</span>
+          )}
+          {report && !report.geoOk && (
+            <span className="hint" style={{ color: "var(--bad)" }}>
+              Не удалось определить страну кэшей — проверьте интернет и повторите.
+            </span>
+          )}
+        </div>
+      )}
+
+      {report && open && (
+        <div
+          style={{
+            maxHeight: 220,
+            overflow: "auto",
+            marginTop: 10,
+            borderTop: "1px solid var(--subtle-fill)",
+            paddingTop: 8,
+          }}
+        >
+          {report.hosts.map((h) => (
+            <div key={h.host} className="mono" style={{ display: "flex", gap: 10, fontSize: 12, padding: "2px 0" }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{h.host}</span>
+              <span className="hint" style={{ width: 118, textAlign: "right" }}>
+                {h.ip || "—"}
+              </span>
+              <span
+                style={{
+                  width: 30,
+                  textAlign: "right",
+                  color: h.country === "RU" ? "var(--bad)" : undefined,
+                  fontWeight: h.country === "RU" ? 600 : 400,
+                }}
+              >
+                {h.country || "?"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="hint" style={{ margin: "10px 0 0" }}>
+        Как это работает и почему так —{" "}
+        <Link onClick={() => api.openExternal("https://github.com/Flowseal/zapret-discord-youtube/discussions/251#discussioncomment-19621478")}>
+          объяснение автора набора
+        </Link>
+        . Файл hosts меняется только в своём блоке, прежняя версия сохраняется рядом с настройками программы. Для
+        записи в hosts нужны права администратора.
+      </p>
     </div>
   );
 }

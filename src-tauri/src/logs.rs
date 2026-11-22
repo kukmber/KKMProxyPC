@@ -1,9 +1,26 @@
 use serde::Serialize;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
 const MAX_LINES: usize = 3000;
+
+/// Сколько мегабайт журнала держать в памяти. Меняется в настройках.
+static MAX_MB: AtomicUsize = AtomicUsize::new(1);
+
+/// Ограничение по размеру: строки в журнале короткие, поэтому считаем
+/// «в среднем 160 байт на строку» — точность здесь не нужна.
+fn max_lines() -> usize {
+    let mb = MAX_MB.load(Ordering::Relaxed).max(1);
+    (mb * 1024 * 1024 / 160).clamp(MAX_LINES / 2, 200_000)
+}
+
+/// Меняет предел журнала. Значение приходит из настроек Telegram, потому что
+/// там же живёт переключатель подробного журнала ядра.
+pub fn set_max_mb(mb: u32) {
+    MAX_MB.store(mb.clamp(1, 100) as usize, Ordering::Relaxed);
+}
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -34,7 +51,7 @@ impl Logs {
                 level: level.into(),
                 msg: msg.into(),
             };
-            if g.1.len() >= MAX_LINES {
+            if g.1.len() >= max_lines() {
                 g.1.pop_front();
             }
             g.1.push_back(line.clone());
